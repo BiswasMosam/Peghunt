@@ -29,7 +29,7 @@
       { "kind": "sth", "case": "C", "number": 63, "name": "Ferrari F40 Competizione", "series": "Ferrari", "seriesNumber": 3, "color": "Spectraflame Gray" },
       { "kind": "sth", "case": "D", "number": 95, "name": "'64 Impala", "series": "Layin' Low", "seriesNumber": 4, "color": "Spectraflame Teal" },
       { "kind": "sth", "case": "E", "number": 116, "name": "'87 Ford Sierra Cosworth", "series": "HW Euro", "seriesNumber": 5, "color": "Spectraflame Pink" },
-      { "kind": "sth", "case": "F", "number": 159, "name": "Honda Civic Custom", "series": "Drag Racers", "seriesNumber": 8, "color": "Spectraflame Aqua", "note": "One source lists it as 151." },
+      { "kind": "sth", "case": "F", "number": 159, "name": "Honda Civic Custom", "series": "Drag Racers", "seriesNumber": 8, "color": "Spectraflame Aqua" },
       { "kind": "sth", "case": "G", "number": 156, "name": "Custom Otto", "series": "Mattel", "seriesNumber": 5, "color": "Spectraflame Blue" },
       { "kind": "sth", "case": "H", "number": 160, "name": "Lotus Sport Elise", "series": "Compact Kings", "seriesNumber": 7, "color": "Spectraflame Orange" },
       { "kind": "sth", "case": "J", "number": 176, "name": "Subaru Impreza", "series": "HW J-Imports", "seriesNumber": 7, "color": "Spectraflame Blue" },

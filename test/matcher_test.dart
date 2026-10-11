@@ -6,7 +6,10 @@ import 'package:peghunt/data/hunt_book.dart';
 import 'package:peghunt/scan/matcher.dart';
 import 'package:peghunt/scan/text_match.dart';
 
-final book = HuntBook.fromJsonString(File('assets/hunts.json').readAsStringSync());
+final book = HuntBook.fromJsonString(
+  File('assets/hunts.json').readAsStringSync(),
+  castings: File('assets/castings.json').readAsStringSync(),
+);
 const all = {2024, 2025, 2026};
 
 /// A line of text at (x, y), 40 px tall, roughly 20 px a character.
@@ -125,9 +128,124 @@ void main() {
       expect(r.hits.single.certainty, Certainty.possible);
     });
 
-    test('the longer name wins', () {
-      final r = matchLines([line("'73 HONDA CIVIC CUSTOM", 0, 0)], book, all);
-      expect(r.hits.single.candidates.single.year, 2025);
+    test('the longer name wins, and the series picks the year', () {
+      // '73 Honda Civic Custom is the 2025 M case STH and an ordinary 2024
+      // Compact Kings car. Its name also contains the 2026 STH Honda Civic Custom.
+      final alone = matchLines([line("'73 HONDA CIVIC CUSTOM", 0, 0)], book, all);
+      expect(alone.hits, isEmpty);
+
+      final r = matchLines([line("'73 HONDA CIVIC CUSTOM", 0, 0), line('THEN AND NOW', 0, 50)], book, all);
+      expect(r.hits.single.candidates.single.toString(), "2025 STH #231 '73 Honda Civic Custom");
+      expect(r.hits.single.certainty, Certainty.likely);
+    });
+
+    test('a number shared with ordinary cars of other years is not a hit', () {
+      // 182 is the 2025 STH '62 Corvette Gasser, but also Chop 'n Bloc in
+      // 2026 and a Chrysler Pacifica in 2024. Read off a real shop photo.
+      expect(matchLines([line('I82/250', 0, 0)], book, all).hits, isEmpty);
+      expect(matchLines([line('182/250', 0, 0)], book, {2025}).hits.single.kind, HuntKind.sth);
+    });
+  });
+
+  // Lines as ML Kit really read them off Mosam's photos, 2026-10-12.
+  group('real cards', () {
+    test('Cone Shaker on its HW Starting Grid card is the 2026 TH', () {
+      final r = matchLines([
+        line('CONE SHAXER', 105, 112),
+        line('EW STARTING GRID', 22, 150),
+        line('8/10', 12, 253),
+      ], book, all);
+      expect(r.hits.single.candidates.single.toString(), '2026 TH #122 Cone Shaker');
+      expect(r.hits.single.certainty, Certainty.likely);
+    });
+
+    test('the ordinary 2025 Cone Shaker is not', () {
+      final r = matchLines([line('CONE SHAKER', 0, 0), line('HW METRO', 0, 50)], book, all);
+      expect(r.hits, isEmpty);
+    });
+
+    test('a bilingual name with the French in the middle', () {
+      final r = matchLines([
+        line('FORD MOOL A CUSTOVPERSONNALISE SI 3', 1004, 484),
+        line('ROD SQUAD', 970, 511),
+      ], book, all);
+      expect(r.hits.single.candidates.single.toString(), "2026 TH #229 Ford Model A Custom '31");
+      expect(r.hits.single.certainty, Certainty.likely);
+    });
+
+    test('Bone Shaker: ordinary in 2026, the TH on its 2024 card', () {
+      expect(matchLines([line('BONE SHAKER', 0, 0)], book, all).hits, isEmpty);
+      expect(matchLines([line('BONE SHAKER', 0, 0), line('HW FAN DRIVEN', 0, 50)], book, all).hits, isEmpty);
+      final th = matchLines([line('BONE SHAKER', 0, 0), line('HW TRACK CHAMPS', 0, 50)], book, all);
+      expect(th.hits.single.candidates.single.toString(), '2024 TH #183 Bone Shaker');
+    });
+
+    test('near misses stay apart', () {
+      // Speed Driver is an ordinary 2025 car, Sweet Driver the 2026 K case TH.
+      expect(matchLines([line('SPEED DRIVER', 0, 0)], book, all).hits, isEmpty);
+      // The logo on every card is not Hot Wheengs, the 2026 D case TH.
+      expect(matchLines([line('HOT WHEELS', 0, 0)], book, all).hits, isEmpty);
+      // Nor is the 2024 '98 Subaru Impreza 22B the 2026 STH Subaru Impreza.
+      expect(matchLines([line("'98 SUBARU IMPREZA 22B STI-VERSION", 0, 0)], book, all).hits, isEmpty);
+    });
+
+    test('a premium card sharing a name with an STH is not one', () {
+      // The Summit Surge McLaren Speedtail, next to its SILVER SERIES logo.
+      final r = matchLines([
+        line('MeLAREN SPEEDTAIL', 443, 480),
+        line('SILVER SERIES', 531, 540),
+      ], book, all);
+      expect(r.hits, isEmpty);
+      // The same name with no premium words near it is worth a look.
+      expect(matchLines([line('MeLAREN SPEEDTAIL', 443, 480)], book, all).hits.single.kind, HuntKind.sth);
+    });
+
+    test('a card read by its number and by its name is one hit', () {
+      // Fast Fish off the test wall, as ML Kit placed it: number at the top,
+      // series up the side, name strip at the bottom.
+      final r = matchLines([
+        const OcrLine('238/250', Rect.fromLTRB(1712, 3246, 1831, 3271), block: 1),
+        const OcrLine('TEAM WHEELS', Rect.fromLTRB(1841, 3483, 1894, 3813), block: 2),
+        const OcrLine('FAST FISH', Rect.fromLTRB(1214, 3864, 1465, 3902), block: 3),
+      ], book, all);
+      expect(r.hits, hasLength(1));
+      expect(r.hits.single.certainty, Certainty.likely);
+      expect(r.hits.single.box, const Rect.fromLTRB(1214, 3246, 1894, 3902));
+      expect(r.cardsRead, 1);
+    });
+
+    test('two halves that are ambiguous alone settle each other', () {
+      // 122 is Cone Shaker in 2026 but other cars in 2025 and 2024; the name
+      // Cone Shaker is also an ordinary 2025 car. Only one car is both.
+      final number = matchLines([const OcrLine('122/250', Rect.fromLTRB(2714, 246, 2831, 271))], book, all);
+      final name = matchLines([const OcrLine('CONE SHAKER', Rect.fromLTRB(2121, 864, 2577, 902))], book, all);
+      expect(number.hits, isEmpty);
+      expect(name.hits, isEmpty);
+
+      final r = matchLines([
+        const OcrLine('122/250', Rect.fromLTRB(2714, 246, 2831, 271), block: 1),
+        const OcrLine('CONE SHAKER', Rect.fromLTRB(2121, 864, 2577, 902), block: 2),
+      ], book, all);
+      expect(r.hits.single.candidates.single.toString(), '2026 TH #122 Cone Shaker');
+      expect(r.hits.single.certainty, Certainty.likely);
+    });
+
+    test('stacked copies of one Treasure Hunt keep a ring each', () {
+      final r = matchLines([
+        for (var i = 0; i < 3; i++) OcrLine('FAST FISH', Rect.fromLTWH(0, i * 300.0, 250, 38), block: i),
+      ], book, all);
+      expect(r.hits, hasLength(3));
+    });
+
+    test('a stacked shop wall of ordinary cars rings nothing', () {
+      final r = matchLines([
+        for (var i = 0; i < 4; i++) line('FORD ESCORT', 0, i * 200.0),
+        for (var i = 0; i < 4; i++) line('BMW M3 WAGON / REMORQUE', 600, i * 200.0),
+        for (var i = 0; i < 4; i++) line('RODGER DODGER 2.0', 1200, i * 200.0),
+      ], book, all);
+      // BMW M3 Wagon is the 2025 P case STH and an ordinary 2024 HW Modified car.
+      expect(r.hits, isEmpty);
+      expect(r.cardsRead, 12);
     });
 
     test('card back with the treasure hunt line is confirmed', () {

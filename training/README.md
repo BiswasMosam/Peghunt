@@ -27,15 +27,32 @@ don't crop or compress it.
 - **Different distances**: a whole wall, half a wall, three cards.
 - Try to keep people out of the frame.
 
+## What the first photos showed (2026-10-12)
+
+19 photos: a collection on a mat, shop walls, premium sets. Read on the
+emulator with `integration_test/ocr_dump_test.dart`.
+
+- They were small (about 1300 px, WhatsApp copies), so most small text was
+  lost. Tiling now gets 2.5 times more words out of photos like these.
+- The name strip at the bottom of the card is what reads best; collector
+  numbers almost never did.
+- Real Treasure Hunts in them: a 2026 Cone Shaker (two photos) and a 2026
+  Ford Model A Custom '31. Both are now found, as likely.
+
+## What helps next
+
+1. **Originals, straight from the phone camera** (or shot with Peghunt
+   itself). Full size, not sent through WhatsApp.
+2. **Say which cards are hunts.** Put a photo in `th/` or `sth/` when it
+   has one, so a miss can be told from a correct "nothing here".
+3. **More shop walls** in `walls/`, the way they are really stacked.
+
 ## What the photos are for
 
-1. **Tuning the card reader (a few photos is enough).** Peghunt v0.1 reads
-   the collector number (`176/250`) and the series line off each card and
-   checks them against the year's lists. The rules for how far apart those
-   two can sit on one card are a guess until they meet real cards
-   (`cardReach` in `lib/scan/matcher.dart`).
-2. **Training a detector (a few hundred photos).** The next step is a small
-   on-device model that finds every card in the frame and the silver or gold
-   circle flame printed behind a hunted car, so a ring can go round the whole
-   card even when its number is too small to read. Loose cars come later:
-   Spectraflame paint and Real Riders tires.
+1. **Tuning the card reader.** Every rule in `lib/scan/matcher.dart` that
+   says "real cards" was measured on these photos.
+2. **Training a detector (a few hundred photos).** Text can't tell a Super
+   Treasure Hunt from its regular twin: same card, same number. A small
+   on-device model can look for the gold or silver circle flame printed
+   behind the car. Loose cars come later: Spectraflame paint and Real
+   Riders tires.

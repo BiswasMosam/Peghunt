@@ -94,6 +94,72 @@ bool tokenSeen(String want, List<String> seen) {
 bool allTokensSeen(List<String> wanted, List<String> seen) =>
     wanted.isNotEmpty && wanted.every((w) => tokenSeen(w, seen));
 
+const _letterLookalikes = {'0': 'O', '1': 'I', '5': 'S', '8': 'B', '2': 'Z', '6': 'G'};
+
+/// A name boiled down to what OCR reliably keeps: letters and digits, no
+/// spaces, and the digits that look like letters turned into those letters.
+/// OCR splits words ("BEN TLEY") and joins them ("20TOYOT"), and reads
+/// DODGER as D00GER; none of that changes the skeleton by much.
+String skeleton(String s) {
+  final b = StringBuffer();
+  for (final ch in normalize(s).split('')) {
+    if (ch == ' ') continue;
+    b.write(_letterLookalikes[ch] ?? ch);
+  }
+  return b.toString();
+}
+
+final _yearToken = RegExp(r"(^|\s)(['’]\d{2}|(19|20)\d{2})(?=\s|$)");
+
+/// The skeletons a car's name may show up as. Bilingual cards put the
+/// French in the middle of the name, so "Ford Model A Custom '31" reads
+/// "FORD MODEL A CUSTOM / PERSONNALISÉ '31". A long name therefore also
+/// counts without its year. A short one keeps it: '64 Impala without the
+/// '64 is every Impala.
+List<String> nameKeys(String name) {
+  final full = skeleton(name);
+  final core = skeleton(name.replaceAll(_yearToken, ' '));
+  return core != full && core.length >= 12 ? [full, core] : [full];
+}
+
+/// How many wrong letters a name of this skeleton length may have and
+/// still count. Real shop photos read FORD MODEL A CUSTOM as FORD MOOL A
+/// CUSTOV: three letters off. Near misses like SWEET DRIVER and SPEED
+/// DRIVER are kept apart by matching against every ordinary car too, so
+/// the closer name wins.
+int errorBudget(int length) => length < 6 ? 0 : length < 10 ? 1 : length < 16 ? 2 : 3;
+
+/// Fewest edits that turn [pattern] into some stretch of [text], or null if
+/// it would take more than [maxErrors]. Stops as soon as no stretch can
+/// still make it, which is after a row or two for most names.
+int? fuzzyFind(String pattern, String text, int maxErrors) {
+  final m = pattern.length, n = text.length;
+  if (m == 0 || n < m - maxErrors) return null;
+  var prev = List<int>.filled(n + 1, 0);
+  var cur = List<int>.filled(n + 1, 0);
+  for (var i = 1; i <= m; i++) {
+    cur[0] = i;
+    var rowMin = i;
+    final p = pattern.codeUnitAt(i - 1);
+    for (var j = 1; j <= n; j++) {
+      final sub = prev[j - 1] + (p == text.codeUnitAt(j - 1) ? 0 : 1);
+      final del = prev[j] + 1, ins = cur[j - 1] + 1;
+      final v = sub < del ? (sub < ins ? sub : ins) : (del < ins ? del : ins);
+      cur[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > maxErrors) return null;
+    final t = prev;
+    prev = cur;
+    cur = t;
+  }
+  var best = prev[0];
+  for (var j = 1; j <= n; j++) {
+    if (prev[j] < best) best = prev[j];
+  }
+  return best <= maxErrors ? best : null;
+}
+
 const _digitLookalikes = {'O': '0', 'Q': '0', 'D': '0', 'I': '1', 'L': '1', '|': '1', 'S': '5', 'B': '8', 'Z': '2'};
 
 /// Reads a number OCR may have mangled ("1O7" is 107, "2S0" is 250).
@@ -107,7 +173,8 @@ int? readDigits(String s) {
   return b.isEmpty ? null : int.tryParse(b.toString());
 }
 
-final _collectorRe = RegExp(r'(?<![0-9A-Z])([0-9OQDILSBZ|]{1,3})\s*[/\\|]\s*([2Z][5S][0OQD])(?![0-9])');
+// The 250 is often read as 260 or 2S0.
+final _collectorRe = RegExp(r'(?<![0-9A-Z])([0-9OQDILSBZ|]{1,3})\s*[/\\|]\s*([2Z][56S][0OQD])(?![0-9])');
 
 /// Collector numbers in a line of card text: "176/250" gives 176.
 List<int> collectorNumbers(String line) {

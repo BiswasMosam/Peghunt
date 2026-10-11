@@ -18,7 +18,10 @@ class AppState extends ChangeNotifier {
   static const _yearsKey = 'scanYears';
 
   static Future<AppState> load() async {
-    final book = HuntBook.fromJsonString(await rootBundle.loadString('assets/hunts.json'));
+    final book = HuntBook.fromJsonString(
+      await rootBundle.loadString('assets/hunts.json'),
+      castings: await rootBundle.loadString('assets/castings.json'),
+    );
     final prefs = await SharedPreferences.getInstance();
     final found = (prefs.getStringList(_foundKey) ?? const []).toSet();
     final saved = prefs.getStringList(_yearsKey)?.map(int.tryParse).whereType<int>().toSet();

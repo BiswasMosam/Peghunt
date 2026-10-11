@@ -40,47 +40,78 @@ each piece is. Peghunt does the same for a wall of diecast.
 
 ```
 photo ──► ML Kit text recognition (on device)
+            │  small photo? also read as 4 enlarged tiles
             │  lines of text + where they sit in the photo
             ▼
           matcher (lib/scan/matcher.dart)
-            │  "176/250"            collector number ──┐
-            │  "HW J-IMPORTS 7/10"  series line ───────┤ grouped per card
-            │  "SUBARU IMPREZA"     car name ──────────┘
+            │  "SUBARU IMPREZA"     name strip, bottom of the card ──┐
+            │  "HW J-IMPORTS"       series tab, up the side ────────┤ grouped per card
+            │  "176/250"            collector number, top ──────────┘
             │  "0/5"                chase slot
             │  "...treasure-hunt vehicle!"  card back
             ▼
-          hunt book (assets/hunts.json)
-            │  2026 STH, case J, #176, Subaru Impreza, HW J-Imports
+          every car of 2024, 2025 and 2026 (840 cars, 90 of them hunts)
+            │  the name, number and series must agree on ONE car,
+            │  and no ordinary car may fit just as well
             ▼
           rings, with how sure each one is
 ```
 
-Each card has one collector number, so each number anchors a group, and the
-series line or car name nearest to it joins that group. Then:
+**What real cards taught it.** The first real photos (a collection on a mat
+and shop walls in India) changed the design:
+
+- **The name is the clue that survives.** Shops stack cards so only the
+  name strip at the bottom shows; the collector number at the top is small
+  and usually hidden. Names lead, numbers back them up.
+- **Old hunts come back as ordinary cars.** Bone Shaker was a 2024 Treasure
+  Hunt and is an ordinary 2026 car; Cone Shaker is the 2026 E case TH and an
+  ordinary 2025 HW Metro car. So every read is matched against all 840 cars,
+  not just the 90 hunts. A name alone counts only if no ordinary car shares
+  it; the series tab or the number settles the rest (Cone Shaker on an
+  HW Starting Grid card is the TH, on HW Metro it is not).
+- **OCR is rough.** Real reads included `CONE SHAXER`, `ROD SOUAD`,
+  `RODGER D00GER`, and `FORD MOOL A CUSTOV / PERSONNALISÉ '31` (bilingual
+  cards put the French mid-name). Names are compared as letter skeletons
+  with look-alike digits folded in and a strict error budget, and the
+  closest car wins, so `SPEED DRIVER` stays an ordinary 2025 car and is not
+  taken for the Sweet Driver TH.
+- **Small photos hide small text.** ML Kit misses text under about 8 px. A
+  photo sent over WhatsApp (about 1300 px) reads 2.5 times more words as
+  four enlarged tiles, so small photos get that; a 12 MP camera photo is
+  read once, as is (measured: ML Kit reads 8 px text in a full 4000 px frame).
+- **Premium cards reuse castings.** A Summit Surge McLaren Speedtail is not
+  the 2025 STH. A name-only match next to premium-line words (Real Riders,
+  Car Culture, Boulevard, Silver Series) is dropped.
+
+On those 19 photos it rings three real 2026 Treasure Hunts (Cone Shaker in
+two photos, Ford Model A Custom '31) and one premium card as a possible.
 
 | Certainty | When | Ring |
 |---|---|---|
 | **Confirmed** | The card says so: the Treasure Hunt line printed on the back | solid |
-| **Likely** | Two things agree: the number *and* the series or name match the same car | solid |
-| **Possible** | One thing matched: a number shared across years, or a name with no number in reach | dashed |
+| **Likely** | Two clues agree on one hunt car: name and series, name and number, or number and series | solid |
+| **Possible** | One clue matched, and no ordinary car shares it | dashed |
 
-The matcher also deals with what OCR gets wrong: `1O7/2S0` reads as 107,
-`MAXlMA` still matches Maxima, and `'64` and `64` count as the same car. A
-car that comes out every year (Bone Shaker was a 2024 Treasure Hunt) isn't
-ringed when its card shows a number that isn't on any list.
+A card's number (top) and name strip (bottom) are found separately and then
+joined when they agree on a car, so each card gets one ring round the whole
+card. Two name strips are never joined: stacked copies of one Treasure Hunt
+each get a ring.
 
 Chase cars need no list at all. Premium sets number their chase car zero,
 so a `0/5` on the card is enough.
 
-## The hunt book
+## The lists
 
-`assets/hunts.json` has all 90 cars: 15 Treasure Hunts and 15 Super Treasure
-Hunts for each of 2024, 2025 and 2026, with case letter, collector number,
-series and colour. They were compiled from collector checklists (Muncle
-Mike's, Orange Track Diecast, Hot Wheels Hub, 164 Custom) and cross-checked
-where the sources overlapped. Where the sources disagree, the car carries a
-note. Adding a year means adding one block to that file. The tests check
-that every year has 15 of each, with unique numbers and case letters.
+- `assets/hunts.json`: all 90 hunts, 15 Treasure Hunts and 15 Super
+  Treasure Hunts for each of 2024, 2025 and 2026, with case letter,
+  collector number, series and colour. Compiled from collector checklists
+  (Muncle Mike's, Orange Track Diecast, Hot Wheels Hub, 164 Custom).
+- `assets/castings.json`: every mainline car of those years (750), from
+  Muncle Mike's complete casting lists. Every hunt was cross-checked
+  against it by number, name and series, and all 90 agree.
+
+Adding a year means one block in each file. The tests check every year has
+15 of each kind with unique numbers and case letters.
 
 ## Build
 
@@ -88,46 +119,59 @@ Flutter 3.38 (Dart 3.10), Android only.
 
 ```bash
 flutter pub get
-flutter test                                    # 23 tests: matcher, hunt book, screens
+flutter test                                    # 38 tests: matcher, real cards, tiles, screens
 flutter build apk --release --split-per-abi     # build/app/outputs/flutter-apk/
 ```
 
 Release builds are signed with `android/key.properties` if it exists. If it
 doesn't, they fall back to the debug key, so a fresh clone still builds.
+After running the integration test below, run `flutter clean` before a
+release build (it leaves the test plugin wired in).
+
+**Testing on real photos.** `integration_test/ocr_dump_test.dart` runs the
+real ML Kit reader on an emulator or phone over a folder of photos served
+from the computer by `tool/ocr_server.py`, and writes back every line read
+and every hit. That is how the matcher was tuned on real cards.
+
+```bash
+python tool/ocr_server.py training/photos out.json
+flutter test integration_test/ocr_dump_test.dart -d emulator-5554
+```
 
 **Testing without a store.** `tool/make_test_wall.py` draws a 12 MP fake
-peg wall with known hunt numbers on it, plus a copy saved sideways with an
-EXIF rotation tag the way a phone saves portrait photos. Push them to an
-emulator and scan them from the gallery button. The screenshots above are
-that wall. `tool/make_icons.py` redraws every launcher icon from the same
+peg wall laid out like 2026 cards, with five hunts, a chase, and decoys such
+as an ordinary Bone Shaker, plus a copy saved sideways with an EXIF rotation
+tag the way a phone saves portrait photos. The screenshots above are that
+wall. `tool/make_icons.py` redraws every launcher icon from the same
 geometry as the in-app mark.
 
 ## Project layout
 
 ```
 lib/
-  data/hunt_book.dart     the lists, as Dart
-  data/app_state.dart     found cars and scan years, saved on the phone
-  scan/text_match.dart    OCR-tolerant reading: numbers, names, 0/5, card-back line
-  scan/matcher.dart       lines of text → hits
-  scan/scanner.dart       ML Kit on the phone, a fake in tests
-  ui/                     hunt (camera), result (rings + list), hit sheet, book
-assets/hunts.json         2024–2026 Treasure Hunts and Super Treasure Hunts
-training/                 where real photos go for the next step (git-ignored)
-tool/                     test wall and icon generators
+  data/hunt_book.dart       the lists, as Dart
+  data/app_state.dart       found cars and scan years, saved on the phone
+  scan/text_match.dart      OCR-tolerant reading: skeletons, fuzzy find, numbers, 0/5
+  scan/matcher.dart         lines of text → hits
+  scan/tiled_ocr.dart       small photos read whole and as enlarged tiles
+  scan/scanner.dart         ML Kit on the phone, a fake in tests
+  ui/                       hunt (camera), result (rings + list), hit sheet, book
+assets/hunts.json           2024–2026 Treasure Hunts and Super Treasure Hunts
+assets/castings.json        every 2024–2026 mainline car
+integration_test/           real ML Kit over a folder of photos
+training/                   where real photos go (git-ignored)
+tool/                       test wall, icons, photo server
 ```
 
 ## Next
 
-v0.1 reads text. The next step is a small on-device detector trained on
-real photos (`training/`):
-
-1. **Tune the card reader on real cards.** How far apart the number and the
-   series line sit on a real card, and which OCR misreads actually happen.
-2. **Find every card** in the frame, so a ring goes round the whole card.
-3. **See the flame.** Detect the silver or gold circle flame behind the car,
-   which tells a Super Treasure Hunt apart from its regular twin.
-4. **Loose cars.** Spectraflame paint and Real Riders tires, for tables of
+1. **Full-size photos and labels.** The first photos were WhatsApp copies.
+   Originals from the phone camera, and knowing which cards in them are
+   hunts, will tell how well it does where it matters.
+2. **See the flame.** The text can't tell a Super Treasure Hunt from its
+   regular twin (same card, same number). A small on-device detector for the
+   gold or silver circle flame behind the car can.
+3. **Loose cars.** Spectraflame paint and Real Riders tires, for tables of
    cars out of the card.
 
 ## Disclaimer

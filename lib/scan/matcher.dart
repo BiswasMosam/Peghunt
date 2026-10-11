@@ -20,10 +20,10 @@ enum Certainty {
   /// The card says so (the treasure hunt line on the back).
   confirmed,
 
-  /// Two things on the card agree: its number and its series or name.
+  /// Two things on the card agree on one car: its name, number or series.
   likely,
 
-  /// One thing matched. Worth a look, not worth a cheer.
+  /// One thing matched, and no ordinary car shares it. Worth a look.
   possible,
 }
 
@@ -55,50 +55,112 @@ class MatchResult {
   const MatchResult({required this.hits, required this.cardsRead, required this.linesRead});
   final List<Hit> hits;
 
-  /// Collector numbers read anywhere in the photo, so the app can say
+  /// Cards whose name or number was read, hunted or not, so the app can say
   /// "read 14 cards, none rare" instead of a bare "nothing found".
   final int cardsRead;
   final int linesRead;
 }
 
-enum _Field { number, otherNumber, name, series, chase, phrase, superPhrase }
+/// A car a card might be: a hunt car, or one of the ordinary mainline cars
+/// that share its name, number or series. The ordinary cars are what make
+/// a match mean something.
+class _Car {
+  _Car({this.year, this.number, required this.name, this.series, this.hunt});
+  final int? year;
+  final int? number;
+  final String name;
+  final String? series;
+  final HuntEntry? hunt;
+}
+
+/// Words printed on every card, listed as cars so that HOT WHEELS on the
+/// logo is closer to itself than to Hot Wheengs.
+const _cardFurniture = ['Hot Wheels', 'Mattel', 'Treasure Hunt', 'Real Riders'];
+
+/// Words only premium cards carry. Premium sets reuse mainline castings
+/// (a Summit Surge McLaren Speedtail is not the 2025 STH), so a name match
+/// next to one of these means nothing on its own.
+final _premiumWords = [
+  for (final w in ['Real Riders', 'Metal Metal', 'Car Culture', 'Pop Culture', 'Boulevard', 'Silver Series', 'Premium'])
+    skeleton(w),
+];
+
+List<_Car> _carsFor(HuntBook book, Set<int> years) {
+  final hunts = {
+    for (final e in book.entries)
+      if (years.contains(e.year)) (e.year, e.number): e,
+  };
+  final cars = <_Car>[];
+  final placed = <HuntEntry>{};
+  for (final c in book.castings) {
+    if (!years.contains(c.year)) continue;
+    final hunt = hunts[(c.year, c.number)];
+    if (hunt != null) placed.add(hunt);
+    cars.add(_Car(year: c.year, number: c.number, name: c.name, series: c.series, hunt: hunt));
+  }
+  // A hunt car missing from the full lists, or a year with no full list.
+  for (final e in hunts.values) {
+    if (!placed.contains(e)) {
+      cars.add(_Car(year: e.year, number: e.number, name: e.name, series: e.series, hunt: e));
+    }
+  }
+  for (final f in _cardFurniture) {
+    cars.add(_Car(name: f));
+  }
+  return cars;
+}
+
+enum _Field { number, otherNumber, name, series, chase, phrase, superPhrase, premium }
 
 class _Signal {
-  _Signal(this.field, this.box, this.text, {this.entries = const [], this.number});
+  _Signal(this.field, this.box, this.text, {this.cars = const [], this.number});
   final _Field field;
   final Rect box;
   final String text;
-  final List<HuntEntry> entries;
+  final List<_Car> cars;
   final int? number;
 }
 
-/// Signals closer than this many line heights belong to the same card.
-/// A first guess until real peg wall photos tune it.
-const cardReach = 3.0;
+/// How far, in heights of an anchor's own text, the rest of its card can
+/// sit. Measured on real 2026 mainline cards: the series tab is about 8
+/// name heights from the name strip, or 1 when printed beside it.
+const cardReach = 10.0;
+
+/// A name and a collector number this close are one card. Kept tight:
+/// on a real card they sit at opposite ends, and a neighbour's number
+/// must not overrule a name.
+const sameCardReach = 3.0;
+
+/// How far apart, in text heights, a card's number and its name strip can
+/// be: the height of a whole card. Used only to join two hits that already
+/// agree on the car.
+const sameCardSpan = 30.0;
 
 /// Turns OCR lines into hits, using the cars of [years] in [book].
 MatchResult matchLines(List<OcrLine> lines, HuntBook book, Set<int> years) {
-  final pool = [for (final e in book.entries) if (years.contains(e.year)) e];
-  final byNumber = <int, List<HuntEntry>>{};
-  for (final e in pool) {
-    byNumber.putIfAbsent(e.number, () => []).add(e);
+  final cars = _carsFor(book, years);
+  final byNumber = <int, List<_Car>>{};
+  for (final c in cars) {
+    if (c.number != null) byNumber.putIfAbsent(c.number!, () => []).add(c);
   }
-  final names = [
-    for (final e in pool) (entry: e, tokens: requiredTokens(e.name)),
+  final names_ = [
+    for (final c in cars)
+      for (final key in {...nameKeys(c.name), if (c.hunt != null) ...nameKeys(c.hunt!.name)})
+        (car: c, key: key),
   ];
-  final seriesNames = [
-    for (final e in pool) (entry: e, tokens: requiredTokens(e.series)),
-  ];
+  // Series lines are shared by many cars, so each distinct one is matched once.
+  final seriesKeys = <String, List<_Car>>{};
+  for (final c in cars) {
+    if (c.series != null) seriesKeys.putIfAbsent(skeleton(c.series!), () => []).add(c);
+  }
 
   final signals = <_Signal>[];
-  var cardsRead = 0;
 
   for (final line in lines) {
     for (final n in collectorNumbers(line.text)) {
-      cardsRead++;
       final hits = byNumber[n];
       signals.add(hits != null
-          ? _Signal(_Field.number, line.box, line.text, entries: hits, number: n)
+          ? _Signal(_Field.number, line.box, line.text, cars: hits, number: n)
           : _Signal(_Field.otherNumber, line.box, line.text, number: n));
     }
     if (hasChaseNumber(line.text)) {
@@ -106,53 +168,185 @@ MatchResult matchLines(List<OcrLine> lines, HuntBook book, Set<int> years) {
     }
   }
 
-  // Names and phrases can wrap, so read each line alone and with the line
-  // after it in the same block.
-  for (final w in _windows(lines)) {
-    final seen = tokenize(w.text);
-    if (seen.isEmpty) continue;
+  // Reads one stretch of text for a treasure hunt line, car names and
+  // series names. Says which of the last two it found.
+  ({bool named, bool series}) read(String raw, Rect box, {bool names = true, bool series = true}) {
+    final seen = tokenize(raw);
+    if (seen.isEmpty) return (named: false, series: false);
 
     final phrase = treasurePhrase(seen);
     if (phrase.th) {
-      signals.add(_Signal(phrase.sth ? _Field.superPhrase : _Field.phrase, w.box, w.text));
+      signals.add(_Signal(phrase.sth ? _Field.superPhrase : _Field.phrase, box, raw));
+    }
+    final text = skeleton(raw);
+
+    if (_premiumWords.any((w) => fuzzyFind(w, text, errorBudget(w.length)) != null)) {
+      signals.add(_Signal(_Field.premium, box, raw));
     }
 
-    final named = [
-      for (final n in names)
-        if (hasDistinctiveToken(n.tokens) && allTokensSeen(n.tokens, seen)) n,
-    ];
-    // '73 Honda Civic Custom also contains Honda Civic Custom; keep the longer.
-    final kept = [
-      for (final a in named)
-        if (!named.any((b) =>
-            b.tokens.length > a.tokens.length && a.tokens.every((t) => b.tokens.contains(t))))
-          a.entry,
-    ];
-    if (kept.isNotEmpty) signals.add(_Signal(_Field.name, w.box, w.text, entries: kept));
+    var foundSeries = false;
+    // The longest series name the line reads as, and how well.
+    var seriesLength = 0, seriesErrors = 0;
+    if (series) {
+      final inSeries = <_Car>[];
+      for (final s in seriesKeys.entries) {
+        final d = fuzzyFind(s.key, text, errorBudget(s.key.length));
+        if (d == null) continue;
+        inSeries.addAll(s.value);
+        if (s.key.length > seriesLength) {
+          seriesLength = s.key.length;
+          seriesErrors = d;
+        }
+      }
+      if (inSeries.isNotEmpty) {
+        signals.add(_Signal(_Field.series, box, raw, cars: inSeries));
+        foundSeries = true;
+      }
+    }
 
-    final series = [
-      for (final s in seriesNames)
-        if (allTokensSeen(s.tokens, seen)) s.entry,
-    ];
-    if (series.isNotEmpty) signals.add(_Signal(_Field.series, w.box, w.text, entries: series));
+    var foundName = false;
+    if (names) {
+      // Only the closest names count: a Bone Shaker card is one letter from
+      // Cone Shaker, but zero from Bone Shaker. And a series line is not a
+      // car: HW TRACK CHAMPS is one letter from the HW-4-Trac.
+      final named = <({_Car car, String key, int d})>[];
+      for (final n in names_) {
+        final d = fuzzyFind(n.key, text, errorBudget(n.key.length));
+        if (d == null) continue;
+        if (n.key.length <= seriesLength && d >= seriesErrors) continue;
+        named.add((car: n.car, key: n.key, d: d));
+      }
+      if (named.isNotEmpty) {
+        final closest = named.map((n) => n.d).reduce(math.min);
+        final near = [for (final n in named) if (n.d == closest) n];
+        // '73 Honda Civic Custom also contains Honda Civic Custom; keep the longer.
+        final kept = {
+          for (final a in near)
+            if (!near.any((b) => b.key.length > a.key.length && b.key.contains(a.key))) a.car,
+        };
+        signals.add(_Signal(_Field.name, box, raw, cars: kept.toList()));
+        foundName = true;
+      }
+    }
+
+    return (named: foundName, series: foundSeries);
   }
 
+  // Names and phrases can wrap onto the next line of the same block. Two
+  // lines are only read together for what neither gave alone: the name
+  // strips of stacked cards often land in one block, and gluing two of
+  // them together would melt two cards into one.
+  final alone = [for (final l in lines) read(l.text, l.box)];
+  for (var i = 0; i + 1 < lines.length; i++) {
+    final a = lines[i], b = lines[i + 1];
+    if (a.block != b.block) continue;
+    read(
+      '${a.text} ${b.text}',
+      a.box.expandToInclude(b.box),
+      names: !alone[i].named && !alone[i + 1].named,
+      series: !alone[i].series && !alone[i + 1].series,
+    );
+  }
+
+  final found = <_Found>[];
+  var namedCards = 0, numberedCards = 0;
+  for (final group in _cluster(signals)) {
+    final known = group.where((s) => _isAnchor(s) && (s.number != null || s.cars.any((c) => c.year != null)));
+    final byName = known.any((s) => s.field == _Field.name);
+    final byNumber = known.any((s) => s.field != _Field.name);
+    if (byName) namedCards++;
+    if (byNumber) numberedCards++;
+    final f = _hitFor(group);
+    if (f == null) continue;
+    final anchors = group.where(_isAnchor);
+    f
+      ..byName = byName
+      ..byNumber = byNumber
+      ..unit = anchors.isEmpty ? _textHeight(f.hit.box) : anchors.map((s) => _textHeight(s.box)).reduce(math.min);
+    found.add(f);
+  }
+
+  // A card's collector number sits at the top and its name strip at the
+  // bottom: two anchors, one card. A part found by its number alone and one
+  // found by its name alone that share a car and lie within a card of each
+  // other are one card, and two independent clues: the number 122 is three
+  // cars across three years, the name Cone Shaker two, but only one car is
+  // both. Two name strips never merge, so stacked copies of one Treasure
+  // Hunt each get a ring.
   final hits = <Hit>[];
-  for (final group in _cluster(signals, _typicalLineHeight(lines))) {
-    final hit = _hitFor(group);
-    if (hit != null) hits.add(hit);
+  final used = <int>{};
+  for (var i = 0; i < found.length; i++) {
+    if (used.contains(i)) continue;
+    final a = found[i];
+    if (a.byNumber && !a.byName) {
+      int? best;
+      var bestGap = double.infinity;
+      for (var j = 0; j < found.length; j++) {
+        final b = found[j];
+        if (j == i || used.contains(j) || !b.byName || b.byNumber) continue;
+        if (!a.pool.any((c) => c.hunt != null && b.pool.contains(c))) continue;
+        final g = _gap(a.hit.box, b.hit.box);
+        if (g <= sameCardSpan * math.min(a.unit, b.unit) && g < bestGap) {
+          best = j;
+          bestGap = g;
+        }
+      }
+      if (best != null) {
+        used
+          ..add(i)
+          ..add(best);
+        hits.add(_merge(a, found[best]));
+        continue;
+      }
+    }
+    used.add(i);
+    if (a.shown) hits.add(a.hit);
   }
   hits.sort((a, b) {
     final c = a.certainty.index.compareTo(b.certainty.index);
     return c != 0 ? c : a.kind.index.compareTo(b.kind.index);
   });
-  return MatchResult(hits: hits, cardsRead: cardsRead, linesRead: lines.length);
+  return MatchResult(hits: hits, cardsRead: math.max(namedCards, numberedCards), linesRead: lines.length);
 }
 
-Hit? _hitFor(List<_Signal> group) {
-  Set<HuntEntry> of(_Field f) => {
+/// What one group of signals adds up to. [shown] is false for a card whose
+/// clues fit a hunt car and an ordinary car equally well: not a hit by
+/// itself, but the other half of its card may settle it.
+class _Found {
+  _Found(this.hit, this.pool, {required this.shown});
+  final Hit hit;
+  final Set<_Car> pool;
+  final bool shown;
+  bool byName = false, byNumber = false;
+  double unit = 1;
+}
+
+List<HuntEntry> _ranked(Iterable<_Car> cars) => [
+      for (final c in cars)
+        if (c.hunt != null) c.hunt!,
+    ]..sort((a, b) {
+        final k = a.kind.index.compareTo(b.kind.index);
+        return k != 0 ? k : b.year.compareTo(a.year);
+      });
+
+Hit _merge(_Found a, _Found b) {
+  final both = a.pool.intersection(b.pool);
+  final candidates = _ranked(both);
+  final ordinary = both.any((c) => c.hunt == null && c.year != null);
+  final better = a.hit.certainty.index <= b.hit.certainty.index ? a.hit.certainty : b.hit.certainty;
+  return Hit(
+    kind: candidates.first.kind,
+    certainty: !ordinary && candidates.length == 1 && better != Certainty.confirmed ? Certainty.likely : better,
+    box: a.hit.box.expandToInclude(b.hit.box),
+    candidates: candidates,
+    evidence: {...a.hit.evidence, ...b.hit.evidence}.toList(),
+  );
+}
+
+_Found? _hitFor(List<_Signal> group) {
+  Set<_Car> of(_Field f) => {
         for (final s in group)
-          if (s.field == f) ...s.entries,
+          if (s.field == f) ...s.cars,
       };
 
   final numbered = of(_Field.number);
@@ -162,37 +356,40 @@ Hit? _hitFor(List<_Signal> group) {
   final superPhrase = group.any((s) => s.field == _Field.superPhrase);
   final chase = group.any((s) => s.field == _Field.chase);
   final otherNumber = group.any((s) => s.field == _Field.otherNumber);
+  final premium = group.any((s) => s.field == _Field.premium);
 
-  // A card's series line only backs up its number or name, it never names a
-  // car by itself: Rod Squad alone has ten cars a year.
+  // Two things on the card that point at the same car. A series line only
+  // ever backs something up: Rod Squad alone is ten cars a year.
   final backed = {
-    for (final e in numbered)
-      if (named.contains(e) || inSeries.contains(e)) e,
-    for (final e in named)
-      if (inSeries.contains(e)) e,
+    for (final c in numbered)
+      if (named.contains(c) || inSeries.contains(c)) c,
+    for (final c in named)
+      if (inSeries.contains(c)) c,
   };
-  // Bone Shaker was a 2024 Treasure Hunt and comes out every year. A Bone
-  // Shaker card whose number is not on any list is just a Bone Shaker.
-  final nameOnly = otherNumber && numbered.isEmpty && !phrase ? <HuntEntry>{} : named;
-  final candidates = backed.isNotEmpty ? backed.toList() : {...numbered, ...nameOnly}.toList();
-  candidates.sort((a, b) {
-    final k = a.kind.index.compareTo(b.kind.index);
-    return k != 0 ? k : b.year.compareTo(a.year);
-  });
+  // A number no list knows means the card is some other car.
+  final nameOnly = otherNumber && numbered.isEmpty ? <_Car>{} : named;
+  final pool = backed.isNotEmpty ? backed : {...numbered, ...nameOnly};
+  final huntCars = [for (final c in pool) if (c.hunt != null) c];
+  final ordinary = pool.any((c) => c.hunt == null && c.year != null);
+  final candidates = _ranked(huntCars);
 
   final evidence = <String>[];
   for (final s in group) {
     switch (s.field) {
       case _Field.number:
-        evidence.add('Collector number ${s.number.toString().padLeft(3, '0')}/250');
+        if (s.cars.any(huntCars.contains)) {
+          evidence.add('Collector number ${s.number.toString().padLeft(3, '0')}/250');
+        }
       case _Field.otherNumber:
         break;
       case _Field.name:
-        evidence.add('Car name "${s.text.trim()}"');
+        if (s.cars.any(huntCars.contains)) evidence.add('Car name "${_withoutAgeMark(s.text)}"');
       case _Field.series:
-        if (candidates.any(s.entries.contains)) evidence.add('Series "${s.text.trim()}"');
+        if (s.cars.any(huntCars.contains)) evidence.add('Series "${s.text.trim()}"');
       case _Field.chase:
         evidence.add('Series number 0/N, the chase slot');
+      case _Field.premium:
+        break;
       case _Field.phrase:
       case _Field.superPhrase:
         evidence.add('Card back: treasure hunt symbol line');
@@ -201,50 +398,53 @@ Hit? _hitFor(List<_Signal> group) {
   final box = group.map((s) => s.box).reduce((a, b) => a.expandToInclude(b));
 
   if (phrase) {
-    return Hit(
-      kind: superPhrase ? HuntKind.sth : HuntKind.th,
-      certainty: Certainty.confirmed,
+    return _Found(
+      Hit(
+        kind: superPhrase ? HuntKind.sth : HuntKind.th,
+        certainty: Certainty.confirmed,
+        box: box,
+        candidates: candidates,
+        evidence: evidence.toSet().toList(),
+      ),
+      pool,
+      shown: true,
+    );
+  }
+  // Premium sets reuse mainline castings; their cards are not hunts.
+  final premiumOnly = premium && backed.isEmpty;
+  if (candidates.isEmpty || premiumOnly) {
+    if (!chase) return null;
+    return _Found(
+      Hit(
+        kind: HuntKind.chase,
+        certainty: Certainty.likely,
+        box: box,
+        candidates: const [],
+        evidence: const ['Series number 0/N, the chase slot'],
+      ),
+      const {},
+      shown: true,
+    );
+  }
+  // A hunt car and an ordinary car fit this part of the card equally well.
+  // Bone Shaker was a 2024 Treasure Hunt and is an ordinary 2026 car: its
+  // name alone says nothing.
+  final contested = ordinary && backed.isEmpty;
+  return _Found(
+    Hit(
+      kind: candidates.first.kind,
+      certainty: backed.isNotEmpty && !ordinary ? Certainty.likely : Certainty.possible,
       box: box,
       candidates: candidates,
       evidence: evidence.toSet().toList(),
-    );
-  }
-  if (candidates.isEmpty) {
-    if (!chase) return null;
-    return Hit(
-      kind: HuntKind.chase,
-      certainty: Certainty.likely,
-      box: box,
-      candidates: const [],
-      evidence: evidence.toSet().toList(),
-    );
-  }
-  return Hit(
-    kind: candidates.first.kind,
-    certainty: backed.isNotEmpty ? Certainty.likely : Certainty.possible,
-    box: box,
-    candidates: candidates,
-    evidence: evidence.toSet().toList(),
+    ),
+    pool,
+    shown: !contested,
   );
 }
 
-Iterable<({String text, Rect box})> _windows(List<OcrLine> lines) sync* {
-  for (var i = 0; i < lines.length; i++) {
-    yield (text: lines[i].text, box: lines[i].box);
-    if (i + 1 < lines.length && lines[i + 1].block == lines[i].block) {
-      yield (
-        text: '${lines[i].text} ${lines[i + 1].text}',
-        box: lines[i].box.expandToInclude(lines[i + 1].box),
-      );
-    }
-  }
-}
-
-double _typicalLineHeight(List<OcrLine> lines) {
-  if (lines.isEmpty) return 1;
-  final hs = [for (final l in lines) math.min(l.box.width, l.box.height)]..sort();
-  return math.max(1, hs[hs.length ~/ 2]);
-}
+/// The name strip starts with the "3+" age mark; quoting it back is noise.
+String _withoutAgeMark(String s) => s.replaceFirst(RegExp(r'^\s*3\s*[+4]\s*'), '').trim();
 
 double _gap(Rect a, Rect b) {
   final dx = math.max(0.0, math.max(a.left, b.left) - math.min(a.right, b.right));
@@ -252,33 +452,72 @@ double _gap(Rect a, Rect b) {
   return math.sqrt(dx * dx + dy * dy);
 }
 
-bool _isNumber(_Signal s) => s.field == _Field.number || s.field == _Field.otherNumber;
+bool _isAnchor(_Signal s) =>
+    s.field == _Field.number || s.field == _Field.otherNumber || s.field == _Field.name;
+
+/// Height of a line of text, whichever way it runs: series tabs are printed
+/// up the side of the card.
+double _textHeight(Rect r) => math.max(1, math.min(r.width, r.height));
 
 /// Groups signals that sit on the same card.
 ///
-/// A card has one collector number, so each number anchors its own group and
-/// every other signal joins the nearest number in reach. Chaining signals
-/// together instead would let a dense wall melt into one giant card.
-/// Signals with no number near them group among themselves.
-List<List<_Signal>> _cluster(List<_Signal> signals, double lineHeight) {
-  final reach = cardReach * lineHeight;
-  final anchors = [for (final s in signals) if (_isNumber(s)) s];
-  final groups = [for (final a in anchors) <_Signal>[a]];
-  final loose = <_Signal>[];
-
+/// A card has one collector number and one name strip, so each of those
+/// anchors a group (one name read twice, alone and wrapped with the next
+/// line, is one anchor). Every other signal joins the nearest anchor in
+/// reach. Chaining signals together instead would let a dense wall melt
+/// into one giant card. Signals with no anchor near them group among
+/// themselves.
+List<List<_Signal>> _cluster(List<_Signal> signals) {
+  final anchors = <_Signal>[];
+  final groups = <List<_Signal>>[];
   for (final s in signals) {
-    if (_isNumber(s)) continue;
+    if (!_isAnchor(s)) continue;
+    final same = anchors.indexWhere((a) => a.field == s.field && a.box.overlaps(s.box));
+    if (same >= 0) {
+      groups[same].add(s);
+    } else {
+      anchors.add(s);
+      groups.add([s]);
+    }
+  }
+
+  // A name and a number right next to each other are the same card.
+  final owner = List<int>.generate(anchors.length, (i) => i);
+  bool isName(int i) => anchors[i].field == _Field.name;
+  for (var i = 0; i < anchors.length; i++) {
+    if (!isName(i)) continue;
     int? best;
-    var bestGap = reach;
+    var bestGap = double.infinity;
+    for (var j = 0; j < anchors.length; j++) {
+      if (isName(j) || groups[j].isEmpty || groups[j].any((s) => s.field == _Field.name)) continue;
+      final reach = sameCardReach * math.min(_textHeight(anchors[i].box), _textHeight(anchors[j].box));
+      final g = _gap(anchors[i].box, anchors[j].box);
+      if (g <= reach && g < bestGap) {
+        best = j;
+        bestGap = g;
+      }
+    }
+    if (best != null) {
+      groups[best].addAll(groups[i]);
+      groups[i] = [];
+      owner[i] = best;
+    }
+  }
+
+  final loose = <_Signal>[];
+  for (final s in signals) {
+    if (_isAnchor(s)) continue;
+    int? best;
+    var bestGap = double.infinity;
     for (var i = 0; i < anchors.length; i++) {
       final g = _gap(s.box, anchors[i].box);
-      if (g <= bestGap) {
+      if (g <= cardReach * _textHeight(anchors[i].box) && g < bestGap) {
         best = i;
         bestGap = g;
       }
     }
     if (best != null) {
-      groups[best].add(s);
+      groups[owner[best]].add(s);
     } else {
       loose.add(s);
     }
@@ -295,6 +534,7 @@ List<List<_Signal>> _cluster(List<_Signal> signals, double lineHeight) {
 
   for (var i = 0; i < loose.length; i++) {
     for (var j = i + 1; j < loose.length; j++) {
+      final reach = cardReach * math.min(_textHeight(loose[i].box), _textHeight(loose[j].box));
       if (_gap(loose[i].box, loose[j].box) <= reach) parent[find(i)] = find(j);
     }
   }
@@ -302,5 +542,5 @@ List<List<_Signal>> _cluster(List<_Signal> signals, double lineHeight) {
   for (var i = 0; i < loose.length; i++) {
     looseGroups.putIfAbsent(find(i), () => []).add(loose[i]);
   }
-  return [...groups, ...looseGroups.values];
+  return [for (final g in groups) if (g.isNotEmpty) g, ...looseGroups.values];
 }

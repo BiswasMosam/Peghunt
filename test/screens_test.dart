@@ -43,10 +43,10 @@ void main() {
 
   testWidgets('result screen rings what the OCR read and lists it', (tester) async {
     final ocr = FakeOcr([
-      const OcrLine('176/250', Rect.fromLTWH(200, 50, 60, 15)),
+      const OcrLine('SUBARU IMPREZA', Rect.fromLTWH(200, 50, 80, 15)),
       const OcrLine('HW J-IMPORTS 7/10', Rect.fromLTWH(200, 70, 90, 15)),
-      const OcrLine('009/250', Rect.fromLTWH(200, 150, 60, 15)),
-      const OcrLine('123/250', Rect.fromLTWH(20, 50, 60, 15)),
+      const OcrLine("'87 BUICK REGAL GNX", Rect.fromLTWH(180, 250, 110, 15)),
+      const OcrLine('FORD ESCORT', Rect.fromLTWH(20, 50, 70, 15)),
     ]);
     await tester.pumpWidget(app(ResultScreen(imagePath: fixture, state: state, scanner: () => Scanner(ocr))));
     await settle(tester);
@@ -70,7 +70,7 @@ void main() {
   });
 
   testWidgets('marking a car found from the sheet shows in the book', (tester) async {
-    final ocr = FakeOcr([const OcrLine('176/250', Rect.fromLTWH(200, 50, 60, 15))]);
+    final ocr = FakeOcr([const OcrLine('SUBARU IMPREZA', Rect.fromLTWH(200, 50, 80, 15))]);
     await tester.pumpWidget(app(ResultScreen(imagePath: fixture, state: state, scanner: () => Scanner(ocr))));
     await settle(tester);
     await tester.tap(find.byIcon(Icons.chevron_right));
@@ -92,7 +92,7 @@ void main() {
     await settle(tester);
     expect(find.text('NOTHING'), findsOneWidget);
     expect(find.text('Nothing on the list.'), findsOneWidget);
-    expect(find.textContaining('READ 2 CARD NUMBERS'), findsOneWidget);
+    expect(find.textContaining('READ 2 CARDS'), findsOneWidget);
   });
 
   testWidgets('an OCR failure is shown, not swallowed', (tester) async {

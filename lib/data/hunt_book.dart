@@ -61,15 +61,27 @@ class HuntEntry {
   String toString() => '$year ${kind.short} #$number $name';
 }
 
-/// Every year's list, bundled with the app as assets/hunts.json.
+/// One car of a year's mainline, hunted or not.
+class Casting {
+  const Casting(this.year, this.number, this.name, this.series);
+  final int year;
+  final int number;
+  final String name;
+  final String series;
+}
+
+/// Every year's hunt list (assets/hunts.json), plus every car of those
+/// years' mainline (assets/castings.json). The full lists are what stop an
+/// ordinary 2026 Bone Shaker from being taken for the 2024 Treasure Hunt.
 class HuntBook {
-  HuntBook(this.entries, {required this.updated, required this.sources});
+  HuntBook(this.entries, {required this.updated, required this.sources, this.castings = const []});
 
   final List<HuntEntry> entries;
   final String updated;
   final List<String> sources;
+  final List<Casting> castings;
 
-  factory HuntBook.fromJsonString(String raw) {
+  factory HuntBook.fromJsonString(String raw, {String? castings}) {
     final j = jsonDecode(raw) as Map<String, dynamic>;
     final years = j['years'] as Map<String, dynamic>;
     final entries = <HuntEntry>[
@@ -80,7 +92,17 @@ class HuntBook {
       entries,
       updated: j['updated'] as String,
       sources: [for (final s in j['sources'] as List) s as String],
+      castings: castings == null ? const [] : _castings(castings),
     );
+  }
+
+  static List<Casting> _castings(String raw) {
+    final years = (jsonDecode(raw) as Map<String, dynamic>)['years'] as Map<String, dynamic>;
+    return [
+      for (final y in years.entries)
+        for (final row in y.value as List)
+          Casting(int.parse(y.key), (row as List)[0] as int, row[1] as String, row[2] as String),
+    ];
   }
 
   /// Newest year first.

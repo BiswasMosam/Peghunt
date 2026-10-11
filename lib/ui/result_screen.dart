@@ -1,13 +1,14 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import '../data/app_state.dart';
 import '../data/hunt_book.dart';
 import '../scan/matcher.dart';
+import '../scan/image_size.dart';
 import '../scan/scanner.dart';
+import '../scan/tiled_ocr.dart';
 import '../theme.dart';
 import 'hit_sheet.dart';
 import 'rail.dart';
@@ -15,7 +16,7 @@ import 'rail.dart';
 /// Builds the scanner a result screen uses. Tests swap in a fake OCR.
 typedef ScannerFactory = Scanner Function();
 
-Scanner defaultScanner() => Scanner(MlKitOcr());
+Scanner defaultScanner() => Scanner(TiledOcr(MlKitOcr()));
 
 /// The photo, dimmed, with a ring around every card worth a look, and the
 /// same hits as a list underneath. Tapping a row flies the photo to its card.
@@ -84,14 +85,16 @@ class _ResultScreenState extends State<ResultScreen> with TickerProviderStateMix
     final result = _result;
     final size = _imageSize;
     if (result == null || size == null) return;
+    // The smallest ring under the finger, so a ring inside a bigger one
+    // can still be picked.
     Hit? best;
-    var bestDist = double.infinity;
+    var bestArea = double.infinity;
     for (final h in result.hits) {
       final ring = ringFor(h, size);
-      final d = (ring.center - imagePoint).distance;
-      if (d <= ring.radius * 1.15 && d < bestDist) {
+      final area = ring.width * ring.height;
+      if (ring.inflate(ring.shortestSide * 0.1).contains(imagePoint) && area < bestArea) {
         best = h;
-        bestDist = d;
+        bestArea = area;
       }
     }
     if (best != null) showHitSheet(context, best, widget.state);
@@ -126,7 +129,7 @@ class _ResultScreenState extends State<ResultScreen> with TickerProviderStateMix
     final offset = Offset((vw - size.width * fit) / 2, (vh - size.height * fit) / 2);
     final ring = ringFor(h, size);
     final p = offset + ring.center * fit;
-    final s = (math.min(vw, vh) * 0.32 / (ring.radius * 2 * fit)).clamp(1.5, 6.0);
+    final s = (math.min(vw, vh) * 0.6 / (ring.longestSide * fit)).clamp(1.5, 6.0);
     final tx = (vw / 2 - p.dx * s).clamp(vw - vw * s, 0.0);
     final ty = (vh / 2 - p.dy * s).clamp(vh - vh * s, 0.0);
     return Matrix4.identity()
@@ -236,32 +239,22 @@ class _ResultScreenState extends State<ResultScreen> with TickerProviderStateMix
       });
 }
 
-/// The photo's size the way it is shown: a phone held upright writes a
-/// landscape JPEG plus an EXIF note to turn it, and both ML Kit and
-/// Flutter apply that note. The header alone gives the unturned size, so a
-/// tiny decode tells whether to swap it.
-Future<Size> orientedImageSize(String path) async {
-  final buffer = await ui.ImmutableBuffer.fromFilePath(path);
-  final descriptor = await ui.ImageDescriptor.encoded(buffer);
-  final raw = Size(descriptor.width.toDouble(), descriptor.height.toDouble());
-  final codec = await descriptor.instantiateCodec(targetWidth: 48);
-  final frame = await codec.getNextFrame();
-  final shownWide = frame.image.width >= frame.image.height;
-  frame.image.dispose();
-  codec.dispose();
-  descriptor.dispose();
-  buffer.dispose();
-  final rawWide = raw.width >= raw.height;
-  return shownWide == rawWide || raw.width == raw.height ? raw : raw.flipped;
+/// Where a hit's ring sits, in image pixels: a pill hugging what was read
+/// off the card (name strip, number, series tab). A circle round a card
+/// spills onto its neighbours; this keeps to the card. Never smaller than
+/// a fingertip on a whole-wall photo.
+Rect ringFor(Hit h, Size image) {
+  final b = h.box;
+  final pad = math.min(b.width, b.height) * 0.3 + image.shortestSide * 0.008;
+  final least = image.shortestSide * 0.06;
+  return Rect.fromCenter(
+    center: b.center,
+    width: math.max(b.width + 2 * pad, least),
+    height: math.max(b.height + 2 * pad, least),
+  );
 }
 
-/// Where a hit's ring sits, in image pixels.
-({Offset center, double radius}) ringFor(Hit h, Size image) {
-  final b = h.box;
-  final long = math.max(b.width, b.height), short = math.min(b.width, b.height);
-  final r = math.max(long / 2 + short * 1.2, image.shortestSide * 0.035);
-  return (center: b.center, radius: r);
-}
+RRect _pill(Rect r) => RRect.fromRectAndRadius(r, Radius.circular(math.min(r.width, r.height) / 2));
 
 class RingPainter extends CustomPainter {
   RingPainter({
@@ -303,7 +296,7 @@ class RingPainter extends CustomPainter {
 
     final holes = Path();
     for (final r in rings) {
-      holes.addOval(Rect.fromCircle(center: r.center, radius: r.radius));
+      holes.addRRect(_pill(r));
     }
     final scrim = Path.combine(PathOperation.difference, Path()..addRect(full), holes);
     canvas.drawPath(scrim, Paint()..color = Colors.black.withValues(alpha: 0.62 * t));
@@ -313,7 +306,7 @@ class RingPainter extends CustomPainter {
       final p = ((reveal.value - start) / 0.55).clamp(0.0, 1.0);
       if (p <= 0) continue;
       final faded = selected != null && selected != hits[i];
-      _paintRing(canvas, hits[i], rings[i].center, rings[i].radius, Curves.easeInOutCubic.transform(p), px,
+      _paintRing(canvas, hits[i], rings[i], Curves.easeInOutCubic.transform(p), px,
           bold: selected == hits[i], faded: faded, bounds: full);
     }
   }
@@ -327,7 +320,7 @@ class RingPainter extends CustomPainter {
     );
   }
 
-  void _paintRing(Canvas canvas, Hit hit, Offset c, double r, double p, double px,
+  void _paintRing(Canvas canvas, Hit hit, Rect rect, double p, double px,
       {required bool bold, required bool faded, required Rect bounds}) {
     final color = Tone.of(hit.kind).withValues(alpha: faded ? 0.35 : 1);
     final width = (hit.certainty == Certainty.possible ? 2.5 : 3.5) * (bold ? 1.6 : 1);
@@ -336,19 +329,17 @@ class RingPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = width * px
       ..strokeCap = StrokeCap.round;
-    final rect = Rect.fromCircle(center: c, radius: r);
-    const top = -math.pi / 2;
-    final sweep = 2 * math.pi * p;
+    // The ring draws itself in, solid when two clues agree, dashed when one
+    // matched.
+    final metric = (Path()..addRRect(_pill(rect))).computeMetrics().first;
+    final drawn = metric.length * p;
     if (hit.certainty == Certainty.possible) {
-      const dashes = 28;
-      const slot = 2 * math.pi / dashes;
-      for (var i = 0; i < dashes; i++) {
-        final a = i * slot;
-        if (a > sweep) break;
-        canvas.drawArc(rect, top + a, math.min(slot * 0.55, sweep - a), false, stroke);
+      final dash = 10 * px, gap = 7 * px;
+      for (var d = 0.0; d < drawn; d += dash + gap) {
+        canvas.drawPath(metric.extractPath(d, math.min(d + dash, drawn)), stroke);
       }
     } else {
-      canvas.drawArc(rect, top, sweep, false, stroke);
+      canvas.drawPath(metric.extractPath(0, drawn), stroke);
     }
     if (p < 1) return;
 
@@ -359,13 +350,12 @@ class RingPainter extends CustomPainter {
     )..layout();
     final pad = EdgeInsets.symmetric(horizontal: 6 * px, vertical: 2 * px);
     final w = tp.width + pad.horizontal, h = tp.height + pad.vertical;
-    // Top right of the ring, flipped to the left or below when that would
-    // run off the photo.
-    const d = 0.7071;
-    var x = c.dx + d * r, y = c.dy - d * r - h;
-    if (x + w > bounds.right) x = c.dx - d * r - w;
-    if (y < bounds.top) y = c.dy + d * r;
+    // On the ring's top edge at the right, or its bottom edge when the top
+    // is off the photo.
+    var x = rect.right - w - rect.shortestSide * 0.3, y = rect.top - h / 2;
+    if (y < bounds.top) y = rect.bottom - h / 2;
     x = x.clamp(bounds.left, math.max(bounds.left, bounds.right - w));
+    y = y.clamp(bounds.top, math.max(bounds.top, bounds.bottom - h));
     final pill = Rect.fromLTWH(x, y, w, h);
     canvas.drawRect(pill, Paint()..color = color);
     tp.paint(canvas, Offset(pill.left + pad.left, pill.top + pad.top));
@@ -446,8 +436,8 @@ class _HitList extends StatelessWidget {
     if (r.hits.isNotEmpty) {
       return 'READ $cards ${cards == 1 ? 'CARD' : 'CARDS'}. TAP A ROW TO FIND IT, AGAIN FOR DETAILS.';
     }
-    if (cards > 0) return 'READ $cards ${cards == 1 ? 'CARD NUMBER' : 'CARD NUMBERS'}. NONE ARE TREASURE HUNTS IN THE YEARS YOU SCAN.';
-    if (r.linesRead > 0) return 'SAW TEXT BUT NO CARD NUMBERS. STEP CLOSER SO THE NUMBERS ARE SHARP.';
+    if (cards > 0) return 'READ $cards ${cards == 1 ? 'CARD' : 'CARDS'}. NONE ARE TREASURE HUNTS IN THE YEARS YOU SCAN.';
+    if (r.linesRead > 0) return 'SAW TEXT BUT NO CAR NAMES. STEP CLOSER SO THE NAME STRIPS ARE SHARP.';
     return 'NO TEXT IN THIS PHOTO. MORE LIGHT, AND STEP CLOSER.';
   }
 }
