@@ -188,16 +188,17 @@ List<int> collectorNumbers(String line) {
 
 final _seriesRe = RegExp(r'(?<![0-9A-Z/])([0-9OQD]{1,2})\s*/\s*([0-9]{1,2})(?![0-9])');
 
+/// Set numbers in a line of card text: "HW J-IMPORTS 7/10" gives 7 of 10.
+/// Collector numbers (of 250) are not set numbers.
+List<({int top, int of})> setSlots(String line) => [
+      for (final m in _seriesRe.allMatches(line.toUpperCase()))
+        if (readDigits(m.group(1)!) case final top?)
+          if (int.tryParse(m.group(2)!) case final of? when of >= 3 && of <= 12 && top <= of) (top: top, of: of),
+    ];
+
 /// Premium chase cars are numbered zero in their set: "0/5" instead of
 /// "1/5". True when a line carries one of those.
-bool hasChaseNumber(String line) {
-  for (final m in _seriesRe.allMatches(line.toUpperCase())) {
-    final top = readDigits(m.group(1)!);
-    final bottom = int.tryParse(m.group(2)!);
-    if (top == 0 && bottom != null && bottom >= 3 && bottom <= 12) return true;
-  }
-  return false;
-}
+bool hasChaseNumber(String line) => setSlots(line).any((s) => s.top == 0);
 
 /// The back of a Treasure Hunt card says so: "Congratulations! This symbol
 /// means you just found a collectible treasure-hunt vehicle!"

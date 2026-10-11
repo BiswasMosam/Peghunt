@@ -52,3 +52,6 @@ android/app/*.jks
 training/photos/**
 !training/photos/**/
 !training/photos/**/.gitkeep
+
+# Gradle run directly (not through flutter) writes here.
+android/build/

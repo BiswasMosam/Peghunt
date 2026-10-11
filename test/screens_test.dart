@@ -69,6 +69,26 @@ void main() {
     expect(find.text('Super Treasure Hunt'), findsOneWidget);
   });
 
+  testWidgets('what it read can be shown, and only a camera shot can be saved', (tester) async {
+    final ocr = FakeOcr([const OcrLine('FORD ESCORT', Rect.fromLTWH(20, 50, 70, 15))]);
+    await tester.pumpWidget(app(ResultScreen(imagePath: fixture, state: state, scanner: () => Scanner(ocr))));
+    await settle(tester);
+    expect(find.byTooltip('Save photo'), findsNothing);
+    await tester.tap(find.byTooltip('Show what it read'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Hide what it read'), findsOneWidget);
+
+    await tester.pumpWidget(app(ResultScreen(
+      key: UniqueKey(),
+      imagePath: fixture,
+      state: state,
+      scanner: () => Scanner(FakeOcr(const [])),
+      fromCamera: true,
+    )));
+    await settle(tester);
+    expect(find.byTooltip('Save photo'), findsOneWidget);
+  });
+
   testWidgets('marking a car found from the sheet shows in the book', (tester) async {
     final ocr = FakeOcr([const OcrLine('SUBARU IMPREZA', Rect.fromLTWH(200, 50, 80, 15))]);
     await tester.pumpWidget(app(ResultScreen(imagePath: fixture, state: state, scanner: () => Scanner(ocr))));
@@ -104,7 +124,7 @@ void main() {
   testWidgets('book: years switch, found count, last scan year stays on', (tester) async {
     await tester.pumpWidget(app(BookScreen(state: state)));
     await tester.pumpAndSettle();
-    expect(find.text('0 OF 30 FOUND'), findsOneWidget);
+    expect(find.text('0 OF 42 FOUND'), findsOneWidget);
     expect(find.text('Drift Ender'), findsOneWidget);
 
     await tester.tap(find.text('2025'));

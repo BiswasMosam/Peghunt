@@ -89,7 +89,7 @@ class _HuntScreenState extends State<HuntScreen> with WidgetsBindingObserver {
         await cam.setFlashMode(FlashMode.off);
         _torch = false;
       }
-      if (mounted) await _open(shot.path);
+      if (mounted) await _open(shot.path, fromCamera: true);
     } on CameraException catch (e) {
       _say('Could not take the photo (${e.code}).');
     } finally {
@@ -102,8 +102,8 @@ class _HuntScreenState extends State<HuntScreen> with WidgetsBindingObserver {
     if (picked != null && mounted) await _open(picked.path);
   }
 
-  Future<void> _open(String path) => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => ResultScreen(imagePath: path, state: widget.state)),
+  Future<void> _open(String path, {bool fromCamera = false}) => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => ResultScreen(imagePath: path, state: widget.state, fromCamera: fromCamera)),
       );
 
   Future<void> _toggleTorch() async {

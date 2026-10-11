@@ -30,7 +30,7 @@ don't crop or compress it.
 ## What the first photos showed (2026-10-12)
 
 19 photos: a collection on a mat, shop walls, premium sets. Read on the
-emulator with `integration_test/ocr_dump_test.dart`.
+emulator with `tool/ocr_dump.dart`.
 
 - They were small (about 1300 px, WhatsApp copies), so most small text was
   lost. Tiling now gets 2.5 times more words out of photos like these.

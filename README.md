@@ -30,9 +30,13 @@ each piece is. Peghunt does the same for a wall of diecast.
 - **Find it.** Every hit is also listed under the photo. Tap a row and the
   photo flies to that card. Tap it again to see what to check before you buy
   (gold flame, Spectraflame paint, Real Riders tires, TH logo).
-- **Hunt book.** The 2024, 2025 and 2026 Treasure Hunt and Super Treasure
-  Hunt lists, by case letter. Tick off the ones you've found, and choose which
+- **Hunt book.** The 2024, 2025 and 2026 Treasure Hunts, Super Treasure
+  Hunts and chase cars. Tick off the ones you've found, and choose which
   years a scan checks against.
+- **What it read.** One tap outlines every line of text the scan read, so a
+  missed car shows whether its name was never read (glare, too far) or read
+  but not matched. A photo taken in the app can be saved to the gallery at
+  full size.
 - **Works offline.** Everything runs on the phone: no account, no network,
   no photos uploaded anywhere.
 
@@ -97,15 +101,29 @@ joined when they agree on a car, so each card gets one ring round the whole
 card. Two name strips are never joined: stacked copies of one Treasure Hunt
 each get a ring.
 
-Chase cars need no list at all. Premium sets number their chase car zero,
-so a `0/5` on the card is enough.
+## Chase cars
+
+A chase is a premium card, and every line marks it differently, so each one
+is matched by its own rule:
+
+| Line | The chase | What decides it |
+|---|---|---|
+| Car Culture (2024–2026) | a second copy of one of the set's own cars | the set number: **0/5** is the chase, 2/5 the regular copy. 2026 chases are gold |
+| Vintage Racing Club, Celebrations, Anniversary sets, The Hot Ones | the set's last car | the set number: **6/6**, **5/5**, **8/8** |
+| Fast & Furious Premium 2026 | a Spectraflame twin of a regular car | nothing printed: same card, same number. Only ever "worth a look" |
+
+So a chase name with its chase number is **likely**; with the set or line name
+but no number read, or a name no mainline car shares (the 2025 Hot Ones BMW
+M1 Procar), it is **possible**; with another set number, it is the regular
+car and gets no ring. A `0/5` read with no name is still a likely chase.
 
 ## The lists
 
-- `assets/hunts.json`: all 90 hunts, 15 Treasure Hunts and 15 Super
-  Treasure Hunts for each of 2024, 2025 and 2026, with case letter,
-  collector number, series and colour. Compiled from collector checklists
-  (Muncle Mike's, Orange Track Diecast, Hot Wheels Hub, 164 Custom).
+- `assets/hunts.json`: 15 Treasure Hunts and 15 Super Treasure Hunts for
+  each of 2024, 2025 and 2026, with case letter, collector number, series
+  and colour, plus 35 chase cars with their line, set and set number.
+  Compiled from collector checklists (Muncle Mike's, Orange Track Diecast,
+  Hot Wheels Hub, 164 Custom, HW Headline).
 - `assets/castings.json`: every mainline car of those years (750), from
   Muncle Mike's complete casting lists. Every hunt was cross-checked
   against it by number, name and series, and all 90 agree.
@@ -119,24 +137,24 @@ Flutter 3.38 (Dart 3.10), Android only.
 
 ```bash
 flutter pub get
-flutter test                                    # 38 tests: matcher, real cards, tiles, screens
+flutter test                                    # 44 tests: matcher, real cards, chases, tiles, screens
 flutter build apk --release --split-per-abi     # build/app/outputs/flutter-apk/
 ```
 
 Release builds are signed with `android/key.properties` if it exists. If it
 doesn't, they fall back to the debug key, so a fresh clone still builds.
-After running the integration test below, run `flutter clean` before a
-release build (it leaves the test plugin wired in).
-
-**Testing on real photos.** `integration_test/ocr_dump_test.dart` runs the
-real ML Kit reader on an emulator or phone over a folder of photos served
-from the computer by `tool/ocr_server.py`, and writes back every line read
-and every hit. That is how the matcher was tuned on real cards.
+**Testing on real photos.** `tool/ocr_dump.dart` is a second entry point
+that runs the real ML Kit reader on an emulator or phone over a folder of
+photos served from the computer by `tool/ocr_server.py`, and writes back
+every line read and every hit. That is how the matcher was tuned on real
+cards.
 
 ```bash
 python tool/ocr_server.py training/photos out.json
-flutter test integration_test/ocr_dump_test.dart -d emulator-5554
+flutter run -t tool/ocr_dump.dart -d emulator-5554 --release --no-resident
 ```
+
+It installs over the app (same package), so reinstall the app afterwards.
 
 **Testing without a store.** `tool/make_test_wall.py` draws a 12 MP fake
 peg wall laid out like 2026 cards, with five hunts, a chase, and decoys such
@@ -158,9 +176,8 @@ lib/
   ui/                       hunt (camera), result (rings + list), hit sheet, book
 assets/hunts.json           2024–2026 Treasure Hunts and Super Treasure Hunts
 assets/castings.json        every 2024–2026 mainline car
-integration_test/           real ML Kit over a folder of photos
 training/                   where real photos go (git-ignored)
-tool/                       test wall, icons, photo server
+tool/                       OCR dump, photo server, test wall, icons
 ```
 
 ## Next

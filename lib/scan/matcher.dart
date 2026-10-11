@@ -52,8 +52,11 @@ class Hit {
 }
 
 class MatchResult {
-  const MatchResult({required this.hits, required this.cardsRead, required this.linesRead});
+  const MatchResult({required this.hits, required this.cardsRead, required this.linesRead, this.lines = const []});
   final List<Hit> hits;
+
+  /// Everything OCR read, for showing what the scan saw.
+  final List<OcrLine> lines;
 
   /// Cards whose name or number was read, hunted or not, so the app can say
   /// "read 14 cards, none rare" instead of a bare "nothing found".
@@ -65,12 +68,20 @@ class MatchResult {
 /// that share its name, number or series. The ordinary cars are what make
 /// a match mean something.
 class _Car {
-  _Car({this.year, this.number, required this.name, this.series, this.hunt});
+  _Car({this.year, this.number, required this.name, this.series, this.line, this.hunt});
   final int? year;
   final int? number;
   final String name;
   final String? series;
+
+  /// A premium car's line, printed on its card too ("Car Culture").
+  final String? line;
   final HuntEntry? hunt;
+
+  bool get isChase => hunt?.isChase ?? false;
+
+  /// A mainline Treasure Hunt or Super Treasure Hunt.
+  bool get isMainlineHunt => hunt != null && !isChase;
 }
 
 /// Words printed on every card, listed as cars so that HOT WHEELS on the
@@ -88,7 +99,7 @@ final _premiumWords = [
 List<_Car> _carsFor(HuntBook book, Set<int> years) {
   final hunts = {
     for (final e in book.entries)
-      if (years.contains(e.year)) (e.year, e.number): e,
+      if (years.contains(e.year) && !e.isChase) (e.year, e.number): e,
   };
   final cars = <_Car>[];
   final placed = <HuntEntry>{};
@@ -104,21 +115,29 @@ List<_Car> _carsFor(HuntBook book, Set<int> years) {
       cars.add(_Car(year: e.year, number: e.number, name: e.name, series: e.series, hunt: e));
     }
   }
+  for (final e in book.entries) {
+    if (years.contains(e.year) && e.isChase) {
+      cars.add(_Car(year: e.year, name: e.name, series: e.series, line: e.line, hunt: e));
+    }
+  }
   for (final f in _cardFurniture) {
     cars.add(_Car(name: f));
   }
   return cars;
 }
 
-enum _Field { number, otherNumber, name, series, chase, phrase, superPhrase, premium }
+enum _Field { number, otherNumber, name, series, chase, slot, phrase, superPhrase, premium }
 
 class _Signal {
-  _Signal(this.field, this.box, this.text, {this.cars = const [], this.number});
+  _Signal(this.field, this.box, this.text, {this.cars = const [], this.number, this.slot});
   final _Field field;
   final Rect box;
   final String text;
   final List<_Car> cars;
   final int? number;
+
+  /// A set number read off the card, "0/5".
+  final String? slot;
 }
 
 /// How far, in heights of an anchor's own text, the rest of its card can
@@ -152,6 +171,7 @@ MatchResult matchLines(List<OcrLine> lines, HuntBook book, Set<int> years) {
   final seriesKeys = <String, List<_Car>>{};
   for (final c in cars) {
     if (c.series != null) seriesKeys.putIfAbsent(skeleton(c.series!), () => []).add(c);
+    if (c.line != null) seriesKeys.putIfAbsent(skeleton(c.line!), () => []).add(c);
   }
 
   final signals = <_Signal>[];
@@ -163,8 +183,10 @@ MatchResult matchLines(List<OcrLine> lines, HuntBook book, Set<int> years) {
           ? _Signal(_Field.number, line.box, line.text, cars: hits, number: n)
           : _Signal(_Field.otherNumber, line.box, line.text, number: n));
     }
-    if (hasChaseNumber(line.text)) {
-      signals.add(_Signal(_Field.chase, line.box, line.text));
+    for (final slot in setSlots(line.text)) {
+      signals.add(_Signal(_Field.slot, line.box, line.text, slot: '${slot.top}/${slot.of}'));
+      // Premium sets number their chase zero.
+      if (slot.top == 0) signals.add(_Signal(_Field.chase, line.box, line.text));
     }
   }
 
@@ -306,7 +328,12 @@ MatchResult matchLines(List<OcrLine> lines, HuntBook book, Set<int> years) {
     final c = a.certainty.index.compareTo(b.certainty.index);
     return c != 0 ? c : a.kind.index.compareTo(b.kind.index);
   });
-  return MatchResult(hits: hits, cardsRead: math.max(namedCards, numberedCards), linesRead: lines.length);
+  return MatchResult(
+    hits: hits,
+    cardsRead: math.max(namedCards, numberedCards),
+    linesRead: lines.length,
+    lines: lines,
+  );
 }
 
 /// What one group of signals adds up to. [shown] is false for a card whose
@@ -344,9 +371,13 @@ Hit _merge(_Found a, _Found b) {
 }
 
 _Found? _hitFor(List<_Signal> group) {
+  // Mainline Treasure Hunts are matched among mainline cars; premium chases
+  // apart, by their own rules, below.
   Set<_Car> of(_Field f) => {
         for (final s in group)
-          if (s.field == f) ...s.cars,
+          if (s.field == f)
+            for (final c in s.cars)
+              if (!c.isChase) c,
       };
 
   final numbered = of(_Field.number);
@@ -357,6 +388,10 @@ _Found? _hitFor(List<_Signal> group) {
   final chase = group.any((s) => s.field == _Field.chase);
   final otherNumber = group.any((s) => s.field == _Field.otherNumber);
   final premium = group.any((s) => s.field == _Field.premium);
+  final box = group.map((s) => s.box).reduce((a, b) => a.expandToInclude(b));
+
+  final chaseHit = _chaseFor(group, box);
+  if (chaseHit != null && !phrase) return chaseHit;
 
   // Two things on the card that point at the same car. A series line only
   // ever backs something up: Rod Squad alone is ten cars a year.
@@ -370,7 +405,8 @@ _Found? _hitFor(List<_Signal> group) {
   final nameOnly = otherNumber && numbered.isEmpty ? <_Car>{} : named;
   final pool = backed.isNotEmpty ? backed : {...numbered, ...nameOnly};
   final huntCars = [for (final c in pool) if (c.hunt != null) c];
-  final ordinary = pool.any((c) => c.hunt == null && c.year != null);
+  final ordinaryCars = [for (final c in pool) if (c.hunt == null && c.year != null) c];
+  final ordinary = ordinaryCars.isNotEmpty;
   final candidates = _ranked(huntCars);
 
   final evidence = <String>[];
@@ -381,21 +417,20 @@ _Found? _hitFor(List<_Signal> group) {
           evidence.add('Collector number ${s.number.toString().padLeft(3, '0')}/250');
         }
       case _Field.otherNumber:
+      case _Field.slot:
+      case _Field.premium:
         break;
       case _Field.name:
         if (s.cars.any(huntCars.contains)) evidence.add('Car name "${_withoutAgeMark(s.text)}"');
       case _Field.series:
         if (s.cars.any(huntCars.contains)) evidence.add('Series "${s.text.trim()}"');
       case _Field.chase:
-        evidence.add('Series number 0/N, the chase slot');
-      case _Field.premium:
-        break;
+        evidence.add('Set number 0, the chase slot');
       case _Field.phrase:
       case _Field.superPhrase:
         evidence.add('Card back: treasure hunt symbol line');
     }
   }
-  final box = group.map((s) => s.box).reduce((a, b) => a.expandToInclude(b));
 
   if (phrase) {
     return _Found(
@@ -420,16 +455,29 @@ _Found? _hitFor(List<_Signal> group) {
         certainty: Certainty.likely,
         box: box,
         candidates: const [],
-        evidence: const ['Series number 0/N, the chase slot'],
+        evidence: const ['Set number 0, the chase slot'],
       ),
       const {},
       shown: true,
     );
   }
   // A hunt car and an ordinary car fit this part of the card equally well.
-  // Bone Shaker was a 2024 Treasure Hunt and is an ordinary 2026 car: its
-  // name alone says nothing.
-  final contested = ordinary && backed.isEmpty;
+  // Read by name alone, the newer car wins, because that is what fills the
+  // pegs: a Cone Shaker is more likely the 2026 Treasure Hunt than the
+  // ordinary 2025 one, but a Bone Shaker is the ordinary 2026 car, not the
+  // 2024 Treasure Hunt. A collector number is never settled this way: the
+  // same number is a different car every year.
+  var contested = ordinary && backed.isEmpty;
+  if (contested && numbered.isEmpty) {
+    final newestHunt = candidates.map((e) => e.year).reduce(math.max);
+    final newestOrdinary = ordinaryCars.map((c) => c.year!).reduce(math.max);
+    if (newestHunt > newestOrdinary) {
+      contested = false;
+      final older = ordinaryCars.firstWhere((c) => c.year == newestOrdinary);
+      evidence.add('Also an ordinary $newestOrdinary car (${older.series}). '
+          'The hunt says ${candidates.first.series} on the card.');
+    }
+  }
   return _Found(
     Hit(
       kind: candidates.first.kind,
@@ -440,6 +488,75 @@ _Found? _hitFor(List<_Signal> group) {
     ),
     pool,
     shown: !contested,
+  );
+}
+
+/// A premium chase, by its name and set number.
+///
+/// A Car Culture chase is a second copy of one of its own set's cars,
+/// numbered 0/5 instead of, say, 2/5, so the set number decides: 0/5 makes
+/// it likely, any other number makes it the regular car. With no number
+/// read, the set or line name on the card makes it worth a look. A twin
+/// chase (Fast & Furious 2026) shares the regular car's number too and only
+/// differs in paint, so it is never more than worth a look.
+_Found? _chaseFor(List<_Signal> group, Rect box) {
+  final named = {
+    for (final s in group)
+      if (s.field == _Field.name)
+        for (final c in s.cars)
+          if (c.isChase) c,
+  };
+  if (named.isEmpty) return null;
+  final inSet = {
+    for (final s in group)
+      if (s.field == _Field.series) ...s.cars,
+  };
+  final slots = {for (final s in group) if (s.field == _Field.slot) s.slot!};
+
+  // A chase name no mainline car shares (the BMW M1 Procar) is worth a look
+  // even when nothing else on its card was read; a Bugatti Bolide is also
+  // an ordinary 2026 car, so it needs its 0/5.
+  final sharedWithMainline = {
+    for (final s in group)
+      if (s.field == _Field.name && s.cars.any((c) => !c.isChase && c.year != null))
+        for (final c in s.cars)
+          if (c.isChase) c,
+  };
+
+  final likely = <_Car>[], possible = <_Car>[];
+  for (final c in named) {
+    final e = c.hunt!;
+    final slotRead = e.slot != null && slots.contains(e.slot);
+    if (e.slot != null && slots.isNotEmpty && !slotRead) continue;
+    if (slotRead && !e.twin) {
+      likely.add(c);
+    } else if (slotRead || inSet.contains(c) || !sharedWithMainline.contains(c)) {
+      possible.add(c);
+    }
+  }
+  final chosen = likely.isNotEmpty ? likely : possible;
+  if (chosen.isEmpty) return null;
+
+  final evidence = <String>{};
+  for (final s in group) {
+    if (s.field == _Field.name && s.cars.any(chosen.contains)) {
+      evidence.add('Car name "${_withoutAgeMark(s.text)}"');
+    } else if (s.field == _Field.series && s.cars.any(chosen.contains)) {
+      evidence.add('Set "${s.text.trim()}"');
+    } else if (s.field == _Field.slot && chosen.any((c) => c.hunt!.slot == s.slot)) {
+      evidence.add('Set number ${s.slot}');
+    }
+  }
+  return _Found(
+    Hit(
+      kind: HuntKind.chase,
+      certainty: likely.isNotEmpty ? Certainty.likely : Certainty.possible,
+      box: box,
+      candidates: _ranked(chosen),
+      evidence: evidence.toList(),
+    ),
+    chosen.toSet(),
+    shown: true,
   );
 }
 

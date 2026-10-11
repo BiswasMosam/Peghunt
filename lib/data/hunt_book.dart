@@ -14,51 +14,77 @@ enum HuntKind {
       values.firstWhere((k) => k.name == s, orElse: () => throw FormatException('Unknown kind "$s"'));
 }
 
-/// One car from a year's Treasure Hunt / Super Treasure Hunt list.
+/// One car from a year's hunt list: a mainline Treasure Hunt or Super
+/// Treasure Hunt, or a premium chase.
 class HuntEntry {
   const HuntEntry({
     required this.year,
     required this.kind,
-    required this.caseLetter,
-    required this.number,
     required this.name,
     required this.series,
+    this.caseLetter,
+    this.number,
     this.seriesNumber,
     this.color,
     this.note,
+    this.line,
+    this.slot,
+    this.twin = false,
   });
 
   final int year;
   final HuntKind kind;
-  final String caseLetter;
+  final String name;
+
+  /// The mainline series ("HW J-Imports"), or for a chase the set printed
+  /// on the card ("Hammer Drop").
+  final String series;
+  final String? caseLetter;
 
   /// Collector number in the year's mainline, the "176" of "176/250".
-  final int number;
-  final String name;
-  final String series;
+  /// Premium chases have none.
+  final int? number;
   final int? seriesNumber;
   final String? color;
   final String? note;
 
-  String get id => '$year-${kind.name}-$number';
+  /// For a chase: the premium line ("Car Culture", "Fast & Furious").
+  final String? line;
+
+  /// For a chase: its place in the set as printed, "0/5" for a Car Culture
+  /// chase, "6/6" where the last car is the chase.
+  final String? slot;
+
+  /// A chase that shares its card and set number with a regular car and
+  /// differs only in paint, like a Super Treasure Hunt.
+  final bool twin;
+
+  bool get isChase => kind == HuntKind.chase;
+
+  String get id => isChase
+      ? '$year-chase-${name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-')}'
+      : '$year-${kind.name}-$number';
 
   /// "176/250", the way it is printed on the card.
-  String get numberLabel => '${number.toString().padLeft(3, '0')}/250';
+  String get numberLabel => number == null ? '' : '${number.toString().padLeft(3, '0')}/250';
 
   factory HuntEntry.fromJson(int year, Map<String, dynamic> j) => HuntEntry(
         year: year,
         kind: HuntKind.parse(j['kind'] as String),
-        caseLetter: j['case'] as String,
-        number: j['number'] as int,
+        caseLetter: j['case'] as String?,
+        number: j['number'] as int?,
         name: j['name'] as String,
-        series: j['series'] as String,
+        series: (j['series'] ?? j['set']) as String,
         seriesNumber: j['seriesNumber'] as int?,
         color: j['color'] as String?,
         note: j['note'] as String?,
+        line: j['line'] as String?,
+        slot: j['slot'] as String?,
+        twin: j['twin'] as bool? ?? false,
       );
 
   @override
-  String toString() => '$year ${kind.short} #$number $name';
+  String toString() => isChase ? '$year CHASE ${slot ?? 'twin'} $name' : '$year ${kind.short} #$number $name';
 }
 
 /// One car of a year's mainline, hunted or not.

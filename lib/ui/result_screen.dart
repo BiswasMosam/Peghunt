@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:gal/gal.dart';
 
 import '../data/app_state.dart';
 import '../data/hunt_book.dart';
@@ -21,11 +22,20 @@ Scanner defaultScanner() => Scanner(TiledOcr(MlKitOcr()));
 /// The photo, dimmed, with a ring around every card worth a look, and the
 /// same hits as a list underneath. Tapping a row flies the photo to its card.
 class ResultScreen extends StatefulWidget {
-  const ResultScreen({super.key, required this.imagePath, required this.state, this.scanner = defaultScanner});
+  const ResultScreen({
+    super.key,
+    required this.imagePath,
+    required this.state,
+    this.scanner = defaultScanner,
+    this.fromCamera = false,
+  });
 
   final String imagePath;
   final AppState state;
   final ScannerFactory scanner;
+
+  /// A photo just taken, which only exists in the app until it is saved.
+  final bool fromCamera;
 
   @override
   State<ResultScreen> createState() => _ResultScreenState();
@@ -43,6 +53,23 @@ class _ResultScreenState extends State<ResultScreen> with TickerProviderStateMix
   MatchResult? _result;
   Object? _error;
   Hit? _selected;
+  var _showReading = false;
+  var _saved = false;
+
+  /// Saves the full size photo to the gallery, so a scan that missed a car
+  /// can be sent over for tuning without WhatsApp shrinking it.
+  Future<void> _save() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      if (!await Gal.hasAccess(toAlbum: true)) await Gal.requestAccess(toAlbum: true);
+      await Gal.putImage(widget.imagePath, album: 'Peghunt');
+      if (!mounted) return;
+      setState(() => _saved = true);
+      messenger.showSnackBar(const SnackBar(content: Text('Saved to the Peghunt album, full size.')));
+    } on GalException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Could not save the photo (${e.type.message}).')));
+    }
+  }
 
   @override
   void initState() {
@@ -161,6 +188,19 @@ class _ResultScreenState extends State<ResultScreen> with TickerProviderStateMix
               for (final k in HuntKind.values)
                 if (counts[k]! > 0) _Count(kind: k, count: counts[k]!),
               const SizedBox(height: 8),
+              RailButton(
+                icon: Icons.text_fields,
+                tooltip: _showReading ? 'Hide what it read' : 'Show what it read',
+                active: _showReading,
+                onTap: _result == null ? null : () => setState(() => _showReading = !_showReading),
+              ),
+              if (widget.fromCamera)
+                RailButton(
+                  icon: _saved ? Icons.check : Icons.save_alt,
+                  tooltip: _saved ? 'Saved' : 'Save photo',
+                  active: _saved,
+                  onTap: _saved ? null : _save,
+                ),
             ],
           ),
           Expanded(child: _body()),
@@ -220,10 +260,11 @@ class _ResultScreenState extends State<ResultScreen> with TickerProviderStateMix
                         CustomPaint(
                           painter: RingPainter(
                             hits: _result?.hits ?? const [],
+                            reading: _showReading ? _result?.lines ?? const [] : const [],
                             selected: _selected,
                             imageSize: size,
                             reveal: _reveal,
-                            reading: _result == null ? _reading : null,
+                            scanning: _result == null ? _reading : null,
                             zoom: _zoom,
                             fit: fit,
                           ),
@@ -259,19 +300,23 @@ RRect _pill(Rect r) => RRect.fromRectAndRadius(r, Radius.circular(math.min(r.wid
 class RingPainter extends CustomPainter {
   RingPainter({
     required this.hits,
+    this.reading = const [],
     required this.selected,
     required this.imageSize,
     required this.reveal,
-    required this.reading,
+    required this.scanning,
     required this.zoom,
     required this.fit,
-  }) : super(repaint: Listenable.merge([reveal, zoom, ?reading]));
+  }) : super(repaint: Listenable.merge([reveal, zoom, ?scanning]));
 
   final List<Hit> hits;
+
+  /// Every line OCR read, outlined, when the collector asks to see it.
+  final List<OcrLine> reading;
   final Hit? selected;
   final Size imageSize;
   final Animation<double> reveal;
-  final Animation<double>? reading;
+  final Animation<double>? scanning;
   final TransformationController zoom;
 
   /// Screen points per image pixel before any pinch zoom.
@@ -284,11 +329,36 @@ class RingPainter extends CustomPainter {
     final px = 1 / (fit * zoom.value.getMaxScaleOnAxis());
     final full = Offset.zero & size;
 
-    final scan = reading;
+    final scan = scanning;
     if (scan != null) {
-      _paintReading(canvas, size, scan.value, px);
+      _paintScanning(canvas, size, scan.value, px);
       return;
     }
+    _paintRings(canvas, size, full, px);
+    if (reading.isNotEmpty) _paintRead(canvas, px);
+  }
+
+  /// What OCR read: each line outlined, its text above it.
+  void _paintRead(Canvas canvas, double px) {
+    final box = Paint()
+      ..color = Tone.bone.withValues(alpha: 0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2 * px;
+    for (final l in reading) {
+      canvas.drawRect(l.box, box);
+      final tp = TextPainter(
+        text: TextSpan(text: l.text, style: mono(9 * px, color: Tone.black, letterSpacing: 0)),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+        ellipsis: '…',
+      )..layout(maxWidth: math.max(l.box.width, 140 * px));
+      final at = Offset(l.box.left, l.box.top - tp.height - 2 * px);
+      canvas.drawRect((at - Offset(2 * px, 0)) & Size(tp.width + 4 * px, tp.height), Paint()..color = Tone.bone);
+      tp.paint(canvas, at);
+    }
+  }
+
+  void _paintRings(Canvas canvas, Size size, Rect full, double px) {
     if (hits.isEmpty) return;
 
     final t = Curves.easeOut.transform(reveal.value);
@@ -311,7 +381,7 @@ class RingPainter extends CustomPainter {
     }
   }
 
-  void _paintReading(Canvas canvas, Size size, double t, double px) {
+  void _paintScanning(Canvas canvas, Size size, double t, double px) {
     canvas.drawRect(Offset.zero & size, Paint()..color = Colors.black.withValues(alpha: 0.35));
     final y = size.height * t;
     canvas.drawRect(
@@ -363,7 +433,11 @@ class RingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(RingPainter old) =>
-      old.hits != hits || old.reading != reading || old.fit != fit || old.selected != selected;
+      old.hits != hits ||
+      old.scanning != scanning ||
+      old.reading != reading ||
+      old.fit != fit ||
+      old.selected != selected;
 }
 
 class _HitList extends StatelessWidget {

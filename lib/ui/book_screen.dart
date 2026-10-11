@@ -42,6 +42,7 @@ class _BookScreenState extends State<BookScreen> {
     final cars = state.book.forYear(_year);
     final sth = [for (final e in cars) if (e.kind == HuntKind.sth) e];
     final th = [for (final e in cars) if (e.kind == HuntKind.th) e];
+    final chase = [for (final e in cars) if (e.kind == HuntKind.chase) e];
     final scanning = state.scanYears.contains(_year);
 
     return CustomScrollView(
@@ -86,6 +87,7 @@ class _BookScreenState extends State<BookScreen> {
         ),
         _section('SUPER TREASURE HUNTS', HuntKind.sth, sth, state),
         _section('TREASURE HUNTS', HuntKind.th, th, state),
+        if (chase.isNotEmpty) _section('CHASE CARS', HuntKind.chase, chase, state),
         SliverPadding(
           padding: EdgeInsets.fromLTRB(20, 28, 20, pad.bottom + 28),
           sliver: SliverToBoxAdapter(child: _Credits(book: state.book)),
@@ -123,7 +125,10 @@ class _Row extends StatelessWidget {
         children: [
           SizedBox(
             width: 34,
-            child: Text(entry.caseLetter, style: syne(22, color: found ? Tone.of(entry.kind) : Tone.faint)),
+            child: entry.isChase
+                ? Text(entry.slot ?? 'TWIN',
+                    style: mono(entry.slot == null ? 8 : 11, bold: true, color: found ? Tone.of(entry.kind) : Tone.faint))
+                : Text(entry.caseLetter ?? '', style: syne(22, color: found ? Tone.of(entry.kind) : Tone.faint)),
           ),
           Expanded(
             child: Column(
@@ -132,7 +137,11 @@ class _Row extends StatelessWidget {
                 Text(entry.name, style: manrope(15, weight: FontWeight.w700)),
                 const SizedBox(height: 2),
                 Text(
-                  [entry.numberLabel, entry.series, if (entry.color != null) entry.color!].join('  ·  '),
+                  [
+                    if (entry.isChase) entry.line ?? '' else entry.numberLabel,
+                    entry.series,
+                    if (entry.color != null) entry.color!,
+                  ].join('  ·  '),
                   style: mono(10),
                   maxLines: 2,
                 ),

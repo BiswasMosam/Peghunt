@@ -54,7 +54,7 @@ class HitSheet extends StatelessWidget {
               const SizedBox(height: 24),
               Text('CHECK BEFORE YOU BUY', style: mono(11, bold: true, color: Tone.bone)),
               const SizedBox(height: 10),
-              for (final c in _checks(hit.kind)) _Check(text: c, color: color),
+              for (final c in _checks(hit)) _Check(text: c, color: color),
               const SizedBox(height: 22),
               Text('READ OFF THE CARD', style: mono(11, bold: true, color: Tone.bone)),
               const SizedBox(height: 8),
@@ -76,7 +76,26 @@ class HitSheet extends StatelessWidget {
         Certainty.possible => 'POSSIBLE: ONE THING MATCHED',
       };
 
-  static List<String> _checks(HuntKind k) => switch (k) {
+  static List<String> _checks(Hit hit) {
+    final first = hit.candidates.isEmpty ? null : hit.candidates.first;
+    if (hit.kind == HuntKind.chase && first != null) {
+      if (first.twin) {
+        return [
+          'Same card and set number as the regular car: only the paint tells them apart',
+          'Spectraflame paint${first.color != null ? ', ${first.color}' : ''}: deep, glossy, almost liquid',
+          'One per case, so most cards on the peg are the regular car',
+        ];
+      }
+      return [
+        'Set number ${first.slot} printed on the card${first.slot == '0/5' ? ', not 1/5 to 5/5' : ''}',
+        if (first.color != null) '${first.color} paint, unlike the regular car of the set',
+        'Real Riders rubber tires',
+      ];
+    }
+    return _kindChecks(hit.kind);
+  }
+
+  static List<String> _kindChecks(HuntKind k) => switch (k) {
         HuntKind.sth => const [
             'Gold circle flame printed on the card, behind the car',
             'Spectraflame paint: deep, glossy, almost liquid',
@@ -105,8 +124,9 @@ class _Candidate extends StatelessWidget {
   Widget build(BuildContext context) {
     final meta = [
       '${entry.year}',
-      'CASE ${entry.caseLetter}',
-      entry.numberLabel,
+      if (entry.caseLetter != null) 'CASE ${entry.caseLetter}',
+      if (entry.isChase) (entry.line ?? '').toUpperCase() else entry.numberLabel,
+      if (entry.isChase && entry.slot != null) entry.slot!,
     ].join('  ·  ');
     final detail = [
       entry.series + (entry.seriesNumber != null ? ' #${entry.seriesNumber}' : ''),

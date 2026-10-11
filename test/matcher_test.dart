@@ -131,8 +131,13 @@ void main() {
     test('the longer name wins, and the series picks the year', () {
       // '73 Honda Civic Custom is the 2025 M case STH and an ordinary 2024
       // Compact Kings car. Its name also contains the 2026 STH Honda Civic Custom.
+      // Alone, the newer car wins: worth a look as the 2025 STH.
       final alone = matchLines([line("'73 HONDA CIVIC CUSTOM", 0, 0)], book, all);
-      expect(alone.hits, isEmpty);
+      expect(alone.hits.single.certainty, Certainty.possible);
+      expect(alone.hits.single.candidates.single.year, 2025);
+
+      final older = matchLines([line("'73 HONDA CIVIC CUSTOM", 0, 0), line('COMPACT KINGS', 0, 50)], book, all);
+      expect(older.hits, isEmpty);
 
       final r = matchLines([line("'73 HONDA CIVIC CUSTOM", 0, 0), line('THEN AND NOW', 0, 50)], book, all);
       expect(r.hits.single.candidates.single.toString(), "2025 STH #231 '73 Honda Civic Custom");
@@ -144,6 +149,60 @@ void main() {
       // 2026 and a Chrysler Pacifica in 2024. Read off a real shop photo.
       expect(matchLines([line('I82/250', 0, 0)], book, all).hits, isEmpty);
       expect(matchLines([line('182/250', 0, 0)], book, {2025}).hits.single.kind, HuntKind.sth);
+    });
+  });
+
+  group('chase', () {
+    test('the BMW M1 Procar on his mat is the 2025 Hot Ones chase', () {
+      // As ML Kit read it off the photo: name, and 8/8 under the series tab.
+      final r = matchLines([
+        line('BMW M1 PROGAR', 369, 682),
+        line('8/8', 699, 778),
+      ], book, all);
+      expect(r.hits.single.kind, HuntKind.chase);
+      expect(r.hits.single.certainty, Certainty.likely);
+      expect(r.hits.single.candidates.single.toString(), '2025 CHASE 8/8 BMW M1 Procar');
+    });
+
+    test('a chase name no mainline car shares is worth a look on its own', () {
+      // Off the same photo: the name runs up the card's side and its 8/8 sits
+      // at the far edge, out of reach.
+      final r = matchLines([
+        const OcrLine('BMW M1 PROGAR', Rect.fromLTRB(369, 682, 378, 761)),
+        const OcrLine('8/8', Rect.fromLTRB(699, 778, 710, 800)),
+      ], book, all);
+      expect(r.hits.single.kind, HuntKind.chase);
+      expect(r.hits.single.certainty, Certainty.possible);
+    });
+
+    test('a Car Culture chase is decided by its set number', () {
+      // The Hammer Drop Stratos Zero is both 2/5 and the 0/5 chase.
+      List<Hit> card(String slot) => matchLines([
+            line('LANCIA STRATOS ZERO', 0, 0),
+            line('HAMMER DROP', 0, 50),
+            line(slot, 400, 50),
+          ], book, all).hits;
+      expect(card('2/5'), isEmpty);
+      expect(card('0/5').single.certainty, Certainty.likely);
+      expect(card('0/5').single.candidates.single.name, 'Lancia Stratos Zero');
+
+      // No number read: worth a look, no more.
+      final unread = matchLines([line('LANCIA STRATOS ZERO', 0, 0), line('CAR CULTURE', 0, 50)], book, all);
+      expect(unread.hits.single.kind, HuntKind.chase);
+      expect(unread.hits.single.certainty, Certainty.possible);
+    });
+
+    test('a twin chase is only ever worth a look', () {
+      final r = matchLines([line("'95 MITSUBISHI ECLIPSE", 0, 0), line('FAST & FURIOUS', 0, 50), line('1/5', 400, 50)],
+          book, all);
+      expect(r.hits.single.kind, HuntKind.chase);
+      expect(r.hits.single.certainty, Certainty.possible);
+    });
+
+    test('a mainline card of a chase casting is not a chase', () {
+      // Bugatti Bolide: the 2025 Eurospeed chase, and an ordinary 2026 HW Starting Grid car.
+      expect(matchLines([line('BUGATTI BOLIDE', 0, 0), line('HW STARTING GRID', 0, 50)], book, all).hits, isEmpty);
+      expect(matchLines([line('BUGATTI BOLIDE', 0, 0)], book, all).hits, isEmpty);
     });
   });
 
@@ -219,8 +278,10 @@ void main() {
       // Cone Shaker is also an ordinary 2025 car. Only one car is both.
       final number = matchLines([const OcrLine('122/250', Rect.fromLTRB(2714, 246, 2831, 271))], book, all);
       final name = matchLines([const OcrLine('CONE SHAKER', Rect.fromLTRB(2121, 864, 2577, 902))], book, all);
+      // The number alone is never enough; the name alone is worth a look,
+      // because the hunt is the newer of the two Cone Shakers.
       expect(number.hits, isEmpty);
-      expect(name.hits, isEmpty);
+      expect(name.hits.single.certainty, Certainty.possible);
 
       final r = matchLines([
         const OcrLine('122/250', Rect.fromLTRB(2714, 246, 2831, 271), block: 1),
@@ -237,14 +298,18 @@ void main() {
       expect(r.hits, hasLength(3));
     });
 
-    test('a stacked shop wall of ordinary cars rings nothing', () {
+    test('a stacked shop wall rings only the STH casting', () {
       final r = matchLines([
         for (var i = 0; i < 4; i++) line('FORD ESCORT', 0, i * 200.0),
         for (var i = 0; i < 4; i++) line('BMW M3 WAGON / REMORQUE', 600, i * 200.0),
         for (var i = 0; i < 4; i++) line('RODGER DODGER 2.0', 1200, i * 200.0),
       ], book, all);
-      // BMW M3 Wagon is the 2025 P case STH and an ordinary 2024 HW Modified car.
-      expect(r.hits, isEmpty);
+      // BMW M3 Wagon is the 2025 P case STH; its only ordinary twin is
+      // older (2024 HW Modified), so each copy is worth a look. The rest
+      // are ordinary cars and stay dark.
+      expect(r.hits, hasLength(4));
+      expect(r.hits.every((h) => h.kind == HuntKind.sth && h.certainty == Certainty.possible), isTrue);
+      expect(r.hits.every((h) => h.candidates.single.name == 'BMW M3 Wagon'), isTrue);
       expect(r.cardsRead, 12);
     });
 
@@ -283,7 +348,12 @@ void main() {
           expect(ofKind.map((e) => e.number).toSet(), hasLength(15), reason: '$y ${k.short} numbers');
           expect(ofKind.map((e) => e.caseLetter).toSet(), hasLength(15), reason: '$y ${k.short} cases');
         }
-        expect(cars.every((e) => e.number >= 1 && e.number <= 250), isTrue);
+        expect(cars.where((e) => !e.isChase).every((e) => e.number! >= 1 && e.number! <= 250), isTrue);
+        // A chase is found by its set number, or (a twin) by its paint.
+        for (final c in cars.where((e) => e.isChase)) {
+          expect(c.line, isNotNull, reason: '$c');
+          expect(c.slot != null || c.twin, isTrue, reason: '$c');
+        }
       }
     });
 
