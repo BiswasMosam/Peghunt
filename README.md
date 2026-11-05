@@ -2,6 +2,8 @@
 
 <h1 align="center">Peghunt</h1>
 
+<p align="center"><a href="https://github.com/BiswasMosam/Peghunt/actions/workflows/tests.yml"><img src="https://github.com/BiswasMosam/Peghunt/actions/workflows/tests.yml/badge.svg" alt="Tests"></a></p>
+
 <p align="center"><b>One ring on a wall of pegs.</b><br>
 Point your phone at a wall of Hot Wheels cards. Peghunt rings the Treasure Hunts, Super Treasure Hunts and Chase cars in it.</p>
 
@@ -140,6 +142,8 @@ flutter pub get
 flutter test                                    # 44 tests: matcher, real cards, chases, tiles, screens
 flutter build apk --release --split-per-abi     # build/app/outputs/flutter-apk/
 ```
+
+GitHub runs `flutter analyze` and the tests on every push (`.github/workflows/tests.yml`).
 
 Release builds are signed with `android/key.properties` if it exists. If it
 doesn't, they fall back to the debug key, so a fresh clone still builds.
